@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2196F3">
+    <title>Descontos Jardins Sky - Login</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="auth-page">
+    <div class="container">
+        <div class="auth-card">
+            <div class="logo">
+                <h1>🚗 Descontos Jardins Sky</h1>
+                <p>Combustível com Desconto na Zona Mais Nobre</p>
+            </div>
+
+            <!-- TAB DE LOGIN -->
+            <div id="login-tab" class="auth-form active">
+                <h2>Entrar</h2>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-email">Email:</label>
+                        <input type="email" id="login-email" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-senha">Senha:</label>
+                        <input type="password" id="login-senha" name="senha" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Entrar</button>
+                </form>
+                <p class="toggle-auth">Não tem conta? <a href="#" onclick="toggleTab()">Cadastre-se</a></p>
+                <div id="login-erro" class="erro-msg"></div>
+            </div>
+
+            <!-- TAB DE CADASTRO -->
+            <div id="cadastro-tab" class="auth-form">
+                <h2>Criar Conta</h2>
+                <form id="cadastro-form">
+                    <div class="form-group">
+                        <label for="cadastro-nome">Nome Completo:</label>
+                        <input type="text" id="cadastro-nome" name="nome" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-cpf">CPF:</label>
+                        <input type="text" id="cadastro-cpf" name="cpf" placeholder="000.000.000-00" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-ocupacao">Ocupação:</label>
+                        <select id="cadastro-ocupacao" name="ocupacao" required>
+                            <option value="">Selecione...</option>
+                            <option value="Táxi">Táxi</option>
+                            <option value="Uber">Uber</option>
+                            <option value="Outro">Outro</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-tel">Telefone:</label>
+                        <input type="tel" id="cadastro-tel" name="tel" placeholder="(11) 99999-9999" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-endereco">Endereço Completo:</label>
+                        <input type="text" id="cadastro-endereco" name="endereco" placeholder="Rua, número, bairro, cidade" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-email">Email:</label>
+                        <input type="email" id="cadastro-email" name="email" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-senha">Senha:</label>
+                        <input type="password" id="cadastro-senha" name="senha" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-confirmacao">Confirmar Senha:</label>
+                        <input type="password" id="cadastro-confirmacao" name="confirmacao" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-desconto-tipo">Tipo de Desconto:</label>
+                        <select id="cadastro-desconto-tipo" name="desconto_tipo" required>
+                            <option value="percentual">Percentual (%)</option>
+                            <option value="reais">Reais (R$)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cadastro-desconto-valor">Valor do Desconto:</label>
+                        <input type="number" id="cadastro-desconto-valor" name="desconto_valor" step="0.01" min="0" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Cadastrar</button>
+                </form>
+                <p class="toggle-auth">Já tem conta? <a href="#" onclick="toggleTab()">Faça Login</a></p>
+                <div id="cadastro-erro" class="erro-msg"></div>
+            </div>
+
+            <div class="info-box">
+                <p>✅ Cadastre-se gratuitamente</p>
+                <p>✅ Gere QR code diariamente</p>
+                <p>✅ Economize em cada abastecimento</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

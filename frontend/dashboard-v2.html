@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2196F3">
+    <title>Descontos Jardins Sky - Dashboard</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dashboard-page">
+    <div class="navbar">
+        <h1>Descontos Jardins Sky</h1>
+        <div class="navbar-icons">
+            <button onclick="exibirPerfil()" class="icon-btn">👤</button>
+            <button onclick="logout()" class="icon-btn">🚪</button>
+        </div>
+    </div>
+
+    <div class="container dashboard-container">
+        <!-- SAUDAÇÃO -->
+        <div class="welcome-card">
+            <h2>Bem-vindo, <span id="cliente-nome">Usuário</span>! 👋</h2>
+            <p>Selecione um produto e gere seu QR code diário para economizar</p>
+        </div>
+
+        <!-- LISTA DE PRODUTOS -->
+        <div class="cupom-card">
+            <div class="cupom-header">
+                <h3>📦 Produtos Disponíveis</h3>
+                <span class="cupom-data" id="cupom-data"></span>
+            </div>
+
+            <div id="produtos-lista" class="produtos-lista">
+                <p style="text-align: center; color: #999; padding: 20px;">Carregando produtos...</p>
+            </div>
+        </div>
+
+        <!-- CUPOM GERADO -->
+        <div class="cupom-card" id="cupom-card" style="display: none;">
+            <div class="cupom-header">
+                <h3>✅ Seu Cupom</h3>
+                <span class="cupom-data" id="cupom-data-2"></span>
+            </div>
+
+            <div id="cupom-gerado" class="cupom-gerado">
+                <div class="qrcode-container">
+                    <img id="qrcode-img" src="" alt="QR Code" style="width: 200px; height: 200px; border: 2px solid #e0e0e0; border-radius: 8px;">
+                    <p id="qrcode-text" class="qrcode-text"></p>
+                </div>
+
+                <div class="cupom-info">
+                    <h4>📦 Produto</h4>
+                    <div class="info-row">
+                        <span class="label">Nome:</span>
+                        <span id="cupom-produto-nome" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Preço:</span>
+                        <span id="cupom-produto-preco" class="valor">-</span>
+                    </div>
+                </div>
+
+                <div class="cupom-info" style="background: #e8f5e9; border-left: 4px solid #4CAF50;">
+                    <h4>💰 Desconto</h4>
+                    <div class="info-row">
+                        <span class="label">Tipo:</span>
+                        <span id="cupom-desconto-tipo" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Valor:</span>
+                        <span id="cupom-desconto-valor" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Por unidade:</span>
+                        <span id="cupom-desconto-unitario" class="valor">-</span>
+                    </div>
+                </div>
+
+                <div class="cupom-info" style="background: #fff3e0; border-left: 4px solid #FF9800;">
+                    <h4>⛽ Limite & Economia</h4>
+                    <div class="info-row">
+                        <span class="label">Limite:</span>
+                        <span id="cupom-limite" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Economia máxima:</span>
+                        <span id="cupom-economia" class="valor">-</span>
+                    </div>
+                </div>
+
+                <div class="cupom-instrucoes">
+                    <h4>Como Usar:</h4>
+                    <ol>
+                        <li>Procure um dos postos participantes</li>
+                        <li>Mostre este QR code para o operador</li>
+                        <li>O desconto será aplicado no abastecimento</li>
+                        <li>Você pode usar até o limite de litros permitido</li>
+                        <li>Gere novo cupom amanhã para mais descontos</li>
+                    </ol>
+                </div>
+
+                <div class="cupom-limites">
+                    <p>⚠️ Um cupom por produto/dia | Válido até consumir limite</p>
+                </div>
+
+                <button onclick="imprimirCupom()" class="btn btn-secondary">
+                    📄 Imprimir Cupom
+                </button>
+
+                <button onclick="voltarProdutos()" class="btn" style="background: #999; margin-top: 10px;">
+                    ← Voltar aos Produtos
+                </button>
+            </div>
+        </div>
+
+        <!-- POSTOS PARTICIPANTES -->
+        <div class="postos-card">
+            <h3>Postos Participantes</h3>
+            <div class="posto-item">
+                <h4>CAJ - Centro Automotivo Jardins</h4>
+                <p>📍 Rua Estados Unidos, 1930 - Esquina Consolação</p>
+                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+            </div>
+            <div class="posto-item">
+                <h4>SKY - Sky Auto Posto</h4>
+                <p>📍 Rua Estados Unidos, 1776 - Esquina Bela Cintra</p>
+                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE PERFIL -->
+    <div id="perfil-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="fecharPerfil()">&times;</span>
+            <h2>Meus Dados</h2>
+            <div id="perfil-dados"></div>
+            <button onclick="fecharPerfil()" class="btn btn-primary">Fechar</button>
+        </div>
+    </div>
+
+    <script src="js/app-v2.js"></script>
+</body>
+</html>

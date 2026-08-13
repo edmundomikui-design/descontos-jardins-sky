@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualização - Descontos Jardins Sky</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 40px;
+            font-size: 32px;
+        }
+
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+            gap: 30px;
+        }
+
+        .screen {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            border: 8px solid #333;
+        }
+
+        .screen-header {
+            background: #2196F3;
+            color: white;
+            padding: 12px 16px;
+            font-size: 12px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .screen-content {
+            padding: 20px;
+            min-height: 600px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .logo-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo-section h2 {
+            font-size: 24px;
+            color: #2196F3;
+            margin-bottom: 8px;
+        }
+
+        .logo-section p {
+            color: #666;
+            font-size: 13px;
+        }
+
+        .form-section {
+            flex: 1;
+        }
+
+        .form-section h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: inherit;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #1976D2;
+        }
+
+        .btn-secondary {
+            background: #FF9800;
+        }
+
+        .btn-secondary:hover {
+            background: #FB8C00;
+        }
+
+        .toggle-link {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .toggle-link a {
+            color: #2196F3;
+            text-decoration: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #0d47a1;
+            margin-bottom: 15px;
+        }
+
+        .welcome-section {
+            background: linear-gradient(135deg, #2196F3, #1976D2);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .welcome-section h2 {
+            margin-bottom: 5px;
+            font-size: 18px;
+        }
+
+        .welcome-section p {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .cupom-box {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .qrcode-placeholder {
+            width: 150px;
+            height: 150px;
+            background: #f5f5f5;
+            border: 2px dashed #ddd;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-size: 32px;
+        }
+
+        .discount-info {
+            background: #fff3e0;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 15px 0;
+            font-size: 13px;
+        }
+
+        .discount-info strong {
+            color: #e65100;
+        }
+
+        .posto-card {
+            border-left: 4px solid #FF9800;
+            background: #fafafa;
+            padding: 12px;
+            margin-bottom: 12px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .posto-card h4 {
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .posto-card p {
+            color: #666;
+            margin: 3px 0;
+        }
+
+        .screen-number {
+            background: #2196F3;
+            color: white;
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        @media (max-width: 1200px) {
+            .demo-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .feature-list {
+            list-style: none;
+            margin: 15px 0;
+            font-size: 13px;
+        }
+
+        .feature-list li {
+            padding: 5px 0;
+            color: #666;
+        }
+
+        .feature-list li:before {
+            content: "✓ ";
+            color: #4CAF50;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .tab {
+            padding: 10px 15px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: #999;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .tab.active {
+            color: #2196F3;
+            border-bottom-color: #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚗 Descontos Jardins Sky - Visualização da Interface</h1>
+
+        <div class="demo-grid">
+            <!-- TELA 1: LOGIN -->
+            <div class="screen">
+                <div class="screen-header">Tela 1/4: Login</div>
+                <div class="screen-content">
+                    <div class="logo-section">
+                        <h2>🚗 Descontos Jardins Sky</h2>
+                        <p>Combustível com Desconto na Zona Mais Nobre</p>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active">Login</button>
+                        <button class="tab">Cadastro</button>
+                    </div>
+
+                    <div class="form-section">
+                        <h3>Entrar</h3>
+
+                        <div class="form-group">
+                            <label>Email:</label>
+                            <input type="email" placeholder="seu@email.com">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Senha:</label>
+                            <input type="password" placeholder="••••••••">
+                        </div>
+
+                        <button class="btn">Entrar</button>
+
+                        <div class="toggle-link">
+                            Não tem conta? <a>Cadastre-se</a>
+                        </div>
+                    </div>
+
+                    <div class="info-box">
+                        ✅ Cadastre-se gratuitamente<br>
+                        ✅ Gere QR code diariamente<br>
+                        ✅ Economize em cada abastecimento
+                    </div>
+                </div>
+            </div>
+
+            <!-- TELA 2: CADASTRO -->
+            <div class="screen">
+                <div class="screen-header">Tela 2/4: Cadastro</div>
+                <div class="screen-content">
+                    <div class="logo-section">
+                        <h2>🚗 Descontos Jardins Sky</h2>
+                        <p>Combustível com Desconto na Zona Mais Nobre</p>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab">Login</button>
+                        <button class="tab active">Cadastro</button>
+                    </div>
+
+                    <div class="form-section" style="overflow-y: auto;">
+                        <h3>Criar Conta</h3>
+
+                        <div class="form-group">
+                            <label>Nome Completo:</label>
+                            <input type="text" placeholder="João Silva">
+                        </div>
+
+                        <div class="form-group">
+                            <label>CPF:</label>
+                            <input type="text" placeholder="000.000.000-00">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Ocupação:</label>
+                            <select>
+                                <option>Selecione...</option>
+                                <option selected>Táxi</option>
+                                <option>Uber</option>
+                                <option>Outro</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Telefone:</label>
+                            <input type="tel" placeholder="(11) 99999-9999">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Tipo de Desconto:</label>
+                            <select>
+                                <option>Percentual (%)</option>
+                                <option>Reais (R$)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Valor do Desconto:</label>
+                            <input type="number" placeholder="5" step="0.01">
+                        </div>
+
+                        <button class="btn">Cadastrar</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TELA 3: DASHBOARD -->
+            <div class="screen">
+                <div class="screen-header">Tela 3/4: Dashboard do Cliente</div>
+                <div class="screen-content">
+                    <div style="background: #2196F3; color: white; padding: 12px; margin: -20px -20px 15px -20px; display: flex; justify-content: space-between; align-items: center;">
+                        <strong>Descontos Jardins Sky</strong>
+                        <span>👤 🚪</span>
+                    </div>
+
+                    <div class="welcome-section">
+                        <h2>Bem-vindo, João! 👋</h2>
+                        <p>Gere seu QR code diário para economizar</p>
+                    </div>
+
+                    <div class="cupom-box">
+                        <h3 style="margin-bottom: 15px; color: #333;">Seu Cupom de Hoje</h3>
+                        <p style="color: #666; font-size: 13px; margin-bottom: 15px;">Você ainda não gerou seu cupom de hoje</p>
+                        <button class="btn">Gerar QR Code</button>
+                    </div>
+
+                    <div class="screen-number" style="margin-top: 15px;">Clique no botão acima</div>
+                </div>
+            </div>
+
+            <!-- TELA 4: CUPOM GERADO -->
+            <div class="screen">
+                <div class="screen-header">Tela 4/4: QR Code Gerado</div>
+                <div class="screen-content">
+                    <div style="background: #2196F3; color: white; padding: 12px; margin: -20px -20px 15px -20px; display: flex; justify-content: space-between; align-items: center;">
+                        <strong>Descontos Jardins Sky</strong>
+                        <span>👤 🚪</span>
+                    </div>
+
+                    <h3 style="color: #333; margin-bottom: 15px;">Seu Cupom de Hoje</h3>
+
+                    <div class="qrcode-placeholder">📱 QR</div>
+
+                    <div class="discount-info">
+                        <strong>Desconto:</strong> 5% em cada compra<br>
+                        <strong>Válido:</strong> Apenas hoje
+                    </div>
+
+                    <div style="background: #f5f5f5; padding: 12px; border-radius: 6px; font-size: 12px; margin: 15px 0;">
+                        <strong>Como Usar:</strong>
+                        <ol style="margin-left: 20px; margin-top: 8px; color: #666;">
+                            <li>Mostre este QR code no caixa</li>
+                            <li>O desconto será aplicado</li>
+                            <li>Volte amanhã para novo cupom</li>
+                        </ol>
+                    </div>
+
+                    <button class="btn btn-secondary">📄 Imprimir Cupom</button>
+                </div>
+            </div>
+
+            <!-- INFORMAÇÕES -->
+            <div class="screen">
+                <div class="screen-header">Funcionalidades Implementadas</div>
+                <div class="screen-content">
+                    <h3 style="color: #2196F3; margin-bottom: 15px;">✅ Frontend Completo</h3>
+
+                    <ul class="feature-list">
+                        <li>Login com email e senha</li>
+                        <li>Cadastro com validação</li>
+                        <li>Geração de QR code</li>
+                        <li>Cupom imprimível</li>
+                        <li>Perfil do cliente</li>
+                        <li>Responsivo mobile</li>
+                        <li>PWA ready</li>
+                        <li>Design moderno</li>
+                    </ul>
+
+                    <h3 style="color: #2196F3; margin-top: 20px; margin-bottom: 15px;">✅ Backend Funcional</h3>
+
+                    <ul class="feature-list">
+                        <li>API REST com 7 endpoints</li>
+                        <li>Autenticação segura</li>
+                        <li>Banco SQLite com 6 tabelas</li>
+                        <li>Geração QR automática</li>
+                        <li>Relatórios por período</li>
+                        <li>Sistema de cupons</li>
+                        <li>Registro de abastecimentos</li>
+                        <li>Validações completas</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- POSTOS -->
+            <div class="screen">
+                <div class="screen-header">Postos Participantes</div>
+                <div class="screen-content">
+                    <h3 style="color: #333; margin-bottom: 20px;">Onde Usar Seus Cupons</h3>
+
+                    <div class="posto-card">
+                        <h4>CAJ - Centro Automotivo Jardins</h4>
+                        <p><strong>📍</strong> Rua Estados Unidos, 1930</p>
+                        <p>Esquina Consolação</p>
+                        <p><strong>⏰</strong> Horário: 24h</p>
+                        <p><strong>⛽</strong> Bandeira: Ipiranga</p>
+                    </div>
+
+                    <div class="posto-card">
+                        <h4>SKY - Sky Auto Posto</h4>
+                        <p><strong>📍</strong> Rua Estados Unidos, 1776</p>
+                        <p>Esquina Bela Cintra</p>
+                        <p><strong>⏰</strong> Horário: 24h</p>
+                        <p><strong>⛽</strong> Bandeira: Ipiranga</p>
+                    </div>
+
+                    <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: center; font-size: 13px; color: #0d47a1;">
+                        <strong>Ambos os postos na zona mais nobre de São Paulo (Jardins)</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 60px; color: white;">
+            <h2 style="margin-bottom: 20px;">🎉 Pronto para Usar!</h2>
+            <p style="font-size: 18px; margin-bottom: 20px;">Acesse http://localhost:8000/demo.html no seu navegador</p>
+            <p style="opacity: 0.9;">Credenciais de teste: teste@email.com / 123456</p>
+        </div>
+    </div>
+</body>
+</html>

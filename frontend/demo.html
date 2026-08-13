@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo - Descontos Jardins Sky</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .demo-info {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px auto;
+            border-radius: 4px;
+            max-width: 600px;
+        }
+    </style>
+</head>
+<body class="auth-page">
+    <div class="container">
+        <div class="auth-card">
+            <div class="logo">
+                <h1>🚗 Descontos Jardins Sky</h1>
+                <p>Combustível com Desconto na Zona Mais Nobre</p>
+                <div class="demo-info">
+                    <strong>🎮 VERSÃO DEMO</strong><br>
+                    Clique nos botões para testar o fluxo
+                </div>
+            </div>
+
+            <div id="login-tab" class="auth-form active">
+                <h2>Entrar</h2>
+                <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 20px; font-size: 13px;">
+                    <strong>👤 Credenciais de Teste:</strong><br>
+                    Email: <code>teste@email.com</code><br>
+                    Senha: <code>123456</code>
+                </div>
+
+                <form onsubmit="return demonstrarLogin(event)">
+                    <div class="form-group">
+                        <label for="demo-email">Email:</label>
+                        <input type="email" id="demo-email" value="teste@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-senha">Senha:</label>
+                        <input type="password" id="demo-senha" value="123456">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Entrar</button>
+                </form>
+
+                <p class="toggle-auth">Não tem conta? <a href="#" onclick="alternaTaba()">Cadastre-se</a></p>
+            </div>
+
+            <div id="cadastro-tab" class="auth-form">
+                <h2>Criar Conta</h2>
+                <form onsubmit="return demonstrarCadastro(event)">
+                    <div class="form-group">
+                        <label>Nome Completo:</label>
+                        <input type="text" value="João da Silva" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>CPF:</label>
+                        <input type="text" value="123.456.789-01" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Ocupação:</label>
+                        <select disabled>
+                            <option>Táxi</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Telefone:</label>
+                        <input type="tel" value="(11) 98765-4321" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Endereço:</label>
+                        <input type="text" value="Rua das Flores, 123, Jardins" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Email:</label>
+                        <input type="email" value="joao@email.com" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo de Desconto:</label>
+                        <select disabled>
+                            <option>Percentual (%)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Valor:</label>
+                        <input type="number" value="5" readonly>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Cadastrar</button>
+                </form>
+                <p class="toggle-auth">Já tem conta? <a href="#" onclick="alternaTaba()">Faça Login</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DASHBOARD -->
+    <div id="dashboard-modal" class="modal" style="display: none; align-items: flex-start; padding-top: 40px;">
+        <div class="modal-content" style="width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
+            <button onclick="fecharDashboard()" style="position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 28px; cursor: pointer;">×</button>
+
+            <div class="navbar" style="position: static; margin: -30px -30px 20px -30px; margin-bottom: 20px;">
+                <h1 style="font-size: 18px;">Descontos Jardins Sky</h1>
+            </div>
+
+            <div class="welcome-card">
+                <h2>Bem-vindo, Cliente Teste! 👋</h2>
+                <p>Gere seu QR code diário para economizar</p>
+            </div>
+
+            <div class="cupom-card">
+                <div class="cupom-header">
+                    <h3>Seu Cupom de Hoje</h3>
+                    <span class="cupom-data" id="data-hoje"></span>
+                </div>
+
+                <div id="cupom-vazio" class="cupom-vazio">
+                    <p>Você ainda não gerou seu cupom de hoje</p>
+                    <button onclick="demonstrarGerarQR()" class="btn btn-primary btn-lg">
+                        Gerar QR Code
+                    </button>
+                </div>
+
+                <div id="cupom-gerado" class="cupom-gerado" style="display: none;">
+                    <div class="qrcode-container">
+                        <svg width="200" height="200" xmlns="http://www.w3.org/2000/svg" style="border: 2px solid #e0e0e0; border-radius: 8px;">
+                            <rect width="200" height="200" fill="white"/>
+                            <text x="50" y="100" font-size="16" text-anchor="middle" dominant-baseline="middle">
+                                QR CODE
+                            </text>
+                            <text x="50" y="130" font-size="12" text-anchor="middle" fill="#999">
+                                Código: ABC12345
+                            </text>
+                        </svg>
+                        <p style="margin-top: 10px; font-size: 12px; color: #999;">Código: ABC12345</p>
+                    </div>
+
+                    <div class="cupom-info">
+                        <h4>Informações do Desconto:</h4>
+                        <div class="info-row">
+                            <span class="label">Tipo:</span>
+                            <span class="valor">Percentual</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Valor:</span>
+                            <span class="valor">5%</span>
+                        </div>
+                    </div>
+
+                    <div class="cupom-instrucoes">
+                        <h4>Como Usar:</h4>
+                        <ol>
+                            <li>Procure um dos postos participantes</li>
+                            <li>Mostre este QR code para o operador</li>
+                            <li>O desconto será aplicado automaticamente</li>
+                            <li>Volte amanhã para gerar novo cupom</li>
+                        </ol>
+                    </div>
+
+                    <div class="cupom-limites">
+                        <p>⚠️ Um cupom por dia | Válido apenas hoje</p>
+                    </div>
+
+                    <button onclick="window.print()" class="btn btn-secondary">
+                        📄 Imprimir Cupom
+                    </button>
+                </div>
+            </div>
+
+            <div class="postos-card">
+                <h3>Postos Participantes</h3>
+                <div class="posto-item">
+                    <h4>CAJ - Centro Automotivo Jardins</h4>
+                    <p>📍 Rua Estados Unidos, 1930 - Esquina Consolação</p>
+                    <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+                </div>
+                <div class="posto-item">
+                    <h4>SKY - Sky Auto Posto</h4>
+                    <p>📍 Rua Estados Unidos, 1776 - Esquina Bela Cintra</p>
+                    <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Atualiza data
+        document.getElementById('data-hoje').textContent = new Date().toLocaleDateString('pt-BR');
+        document.getElementById('cupom-data').textContent = new Date().toLocaleDateString('pt-BR');
+
+        function alternaTaba() {
+            document.getElementById('login-tab').classList.toggle('active');
+            document.getElementById('cadastro-tab').classList.toggle('active');
+            return false;
+        }
+
+        function demonstrarLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('demo-email').value;
+            const senha = document.getElementById('demo-senha').value;
+
+            if (email === 'teste@email.com' && senha === '123456') {
+                alert('✅ Login realizado com sucesso!\n\nVocê será redirecionado para o dashboard...');
+                document.getElementById('dashboard-modal').style.display = 'flex';
+                document.body.style.overflow = 'hidden';
+            } else {
+                alert('❌ Email ou senha incorretos!\nUse: teste@email.com / 123456');
+            }
+            return false;
+        }
+
+        function demonstrarCadastro(e) {
+            e.preventDefault();
+            alert('✅ Cadastro realizado com sucesso!\n\nAgora faça login com:\nEmail: joao@email.com\nSenha: 123456');
+            alternaTaba();
+            return false;
+        }
+
+        function demonstrarGerarQR() {
+            document.getElementById('cupom-vazio').style.display = 'none';
+            document.getElementById('cupom-gerado').style.display = 'block';
+            alert('✅ QR code gerado com sucesso!');
+        }
+
+        function fecharDashboard() {
+            document.getElementById('dashboard-modal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        // Fechar ao clicar fora
+        document.getElementById('dashboard-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'dashboard-modal') fecharDashboard();
+        });
+    </script>
+</body>
+</html>

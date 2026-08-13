@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2196F3">
+    <title>Descontos Jardins Sky - Meu Cupom</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dashboard-page">
+    <div class="navbar">
+        <h1>Descontos Jardins Sky</h1>
+        <div class="navbar-icons">
+            <button onclick="exibirPerfil()" class="icon-btn">👤</button>
+            <button onclick="logout()" class="icon-btn">🚪</button>
+        </div>
+    </div>
+
+    <div class="container dashboard-container">
+        <!-- SAUDAÇÃO -->
+        <div class="welcome-card">
+            <h2>Bem-vindo, <span id="cliente-nome">Usuário</span>! 👋</h2>
+            <p>Gere seu QR code diário para economizar em cada abastecimento</p>
+        </div>
+
+        <!-- PRODUTOS DISPONÍVEIS (NOVO) -->
+        <div class="cupom-card">
+            <div class="cupom-header">
+                <h3>📦 Produtos Disponíveis</h3>
+                <span id="cupom-data" class="cupom-data"></span>
+            </div>
+
+            <div id="produtos-lista" class="produtos-lista">
+                <p style="text-align: center; color: #999;">Carregando produtos...</p>
+            </div>
+        </div>
+
+        <!-- CUPOM DO DIA -->
+        <div class="cupom-card" id="cupom-card" style="display: none;">
+            <div class="cupom-header">
+                <h3>Seu Cupom de Hoje</h3>
+                <span id="cupom-data-2" class="cupom-data"></span>
+            </div>
+
+            <div id="cupom-vazio" class="cupom-vazio" style="display: none;">
+                <p>Selecione um produto para gerar cupom</p>
+            </div>
+
+            <div id="cupom-gerado" class="cupom-gerado" style="display: none;">
+                <div class="qrcode-container">
+                    <img id="qrcode-img" src="" alt="QR Code">
+                    <p id="qrcode-text" class="qrcode-text"></p>
+                </div>
+
+                <div class="cupom-info">
+                    <h4>Informações do Desconto:</h4>
+                    <div class="info-row">
+                        <span class="label">Tipo:</span>
+                        <span id="desconto-tipo" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Valor:</span>
+                        <span id="desconto-valor" class="valor">-</span>
+                    </div>
+                </div>
+
+                <div class="cupom-instrucoes">
+                    <h4>Como Usar:</h4>
+                    <ol>
+                        <li>Procure um dos postos participantes</li>
+                        <li>Mostre este QR code para o operador</li>
+                        <li>O desconto será aplicado automaticamente</li>
+                        <li>Volte amanhã para gerar novo cupom</li>
+                    </ol>
+                </div>
+
+                <div class="cupom-limites">
+                    <p>⚠️ Um cupom por dia | Válido apenas hoje</p>
+                </div>
+
+                <button onclick="imprimirCupom()" class="btn btn-secondary">
+                    📄 Imprimir Cupom
+                </button>
+            </div>
+
+            <div id="erro-cupom" class="erro-msg"></div>
+        </div>
+
+        <!-- POSTOS PARTICIPANTES -->
+        <div class="postos-card">
+            <h3>Postos Participantes</h3>
+            <div class="posto-item">
+                <h4>CAJ - Centro Automotivo Jardins</h4>
+                <p>📍 Rua Estados Unidos, 1930 - Esquina Consolação</p>
+                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+            </div>
+            <div class="posto-item">
+                <h4>SKY - Sky Auto Posto</h4>
+                <p>📍 Rua Estados Unidos, 1776 - Esquina Bela Cintra</p>
+                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+            </div>
+        </div>
+
+        <!-- MEUS ABASTECIMENTOS -->
+        <div class="historico-card">
+            <h3>Histórico de Abastecimentos</h3>
+            <div id="historico-container">
+                <p>Nenhum abastecimento registrado ainda</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE PERFIL -->
+    <div id="perfil-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="fecharPerfil()">&times;</span>
+            <h2>Meus Dados</h2>
+            <div id="perfil-dados"></div>
+            <button onclick="fecharPerfil()" class="btn btn-primary">Fechar</button>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
