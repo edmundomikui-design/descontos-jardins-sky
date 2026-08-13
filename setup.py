@@ -1,14 +1,13 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name="descontos-jardins-sky",
-    version="0.1.0",
-    packages=find_packages(),
+    version="1.0.0",
+    py_modules=[],
     install_requires=[
-        "flask",
-        "flask-cors",
-        "python-dotenv",
-        "pillow",
+        "flask>=2.0.0",
+        "flask-cors>=3.0.0",
+        "python-dotenv>=0.19.0",
+        "pillow>=8.0.0",
     ],
-    python_requires=">=3.8",
 )
