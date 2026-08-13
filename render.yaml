@@ -1,0 +1,5 @@
+build:
+  command: pip install -r backend/requirements.txt
+
+start:
+  command: cd backend && python app.py
