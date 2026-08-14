@@ -41,9 +41,12 @@ html, body {
     background: white;
     border-radius: 12px;
     padding: 30px;
+    padding-top: 40px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
     width: 100%;
     max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .logo {
