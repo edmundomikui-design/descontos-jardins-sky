@@ -104,8 +104,8 @@ def cadastro():
             data.get('endereco'),
             data.get('email'),
             senha_hash,
-            data.get('desconto_tipo', 'percentual'),
-            float(data.get('desconto_valor', 5))
+            'fixo',  # Tipo: valor fixo em reais
+            1.00     # Desconto padrão: R$ 1,00 por litro
         ))
 
         conn.commit()
@@ -499,6 +499,63 @@ def relatorio_admin():
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
+# ==================== ROTAS DE ADMIN ====================
+
+@app.route('/api/admin/descontos', methods=['GET'])
+def get_descontos_ocupacoes():
+    """Obtém descontos por ocupação"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT DISTINCT ocupacao, desconto_valor
+            FROM clientes
+            WHERE ocupacao IS NOT NULL
+            ORDER BY ocupacao
+        ''')
+        descontos = cursor.fetchall()
+        conn.close()
+
+        return jsonify({
+            'descontos_por_ocupacao': [dict(row) for row in descontos]
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+@app.route('/api/admin/descontos/atualizar', methods=['POST'])
+def atualizar_descontos():
+    """Atualiza desconto para todos os clientes de uma ocupação"""
+    try:
+        data = request.get_json()
+        ocupacao = data.get('ocupacao')  # 'Táxi', 'Uber', 'Outro'
+        novo_valor = float(data.get('valor'))  # R$ 1.00
+
+        if not ocupacao or novo_valor < 0:
+            return jsonify({'erro': 'Ocupação e valor inválidos'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE clientes
+            SET desconto_valor = ?, desconto_tipo = 'fixo'
+            WHERE ocupacao = ?
+        ''', (novo_valor, ocupacao))
+
+        conn.commit()
+        clientes_atualizados = cursor.rowcount
+        conn.close()
+
+        return jsonify({
+            'mensagem': f'Desconto atualizado para {clientes_atualizados} clientes de {ocupacao}',
+            'ocupacao': ocupacao,
+            'novo_valor': novo_valor,
+            'clientes_atualizados': clientes_atualizados
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check"""
@@ -509,4 +566,4 @@ def health():
     }), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
