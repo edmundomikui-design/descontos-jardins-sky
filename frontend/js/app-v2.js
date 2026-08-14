@@ -1,5 +1,5 @@
 // ===== CONFIGURAÇÃO =====
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'https://descontos-jardins-sky-1.onrender.com/api';
 let clienteAtual = null;
 let produtosDisponiveis = [];
 let cuponsGerados = {}; // { produto_id: cupom_data }
@@ -60,9 +60,7 @@ function setupLoginForm() {
                 endereco: document.getElementById('cadastro-endereco').value,
                 email: document.getElementById('cadastro-email').value,
                 senha: document.getElementById('cadastro-senha').value,
-                confirmacao: document.getElementById('cadastro-confirmacao').value,
-                desconto_tipo: document.getElementById('cadastro-desconto-tipo').value,
-                desconto_valor: document.getElementById('cadastro-desconto-valor').value
+                confirmacao: document.getElementById('cadastro-confirmacao').value
             };
             await fazerCadastro(dados);
         });
