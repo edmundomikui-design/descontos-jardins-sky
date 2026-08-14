@@ -184,17 +184,27 @@ function verificarAutenticacao() {
 // ===== PRODUTOS (NOVO) =====
 async function carregarProdutos() {
     try {
-        const response = await fetch(`${API_BASE_URL}/produtos`);
+        console.log('Iniciando carregamento de produtos...');
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos
+
+        const response = await fetch(`${API_BASE_URL}/produtos`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
         const data = await response.json();
 
         if (response.ok) {
+            console.log('Produtos carregados:', data.produtos.length);
             produtosDisponiveis = data.produtos;
             renderizarProdutos();
         } else {
             console.error('Erro ao carregar produtos:', data.erro);
+            document.getElementById('produtos-lista').innerHTML = '<p style="color: red;">Erro ao carregar produtos</p>';
         }
     } catch (erro) {
-        console.error('Erro ao conectar:', erro);
+        console.error('Erro ao conectar:', erro.message);
+        document.getElementById('produtos-lista').innerHTML = '<p style="color: red;">Falha ao conectar. Recarregue a página.</p>';
     }
 }
 
