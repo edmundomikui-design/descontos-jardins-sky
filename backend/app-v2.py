@@ -11,7 +11,13 @@ import re
 from database import init_db, get_db
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 app.config['SECRET_KEY'] = 'sua-chave-secreta-aqui-mude-em-producao'
 
 # Inicializa banco de dados
