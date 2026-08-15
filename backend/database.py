@@ -182,7 +182,11 @@ def _schema(pg):
             quantidade_permitida {real} DEFAULT 50,
             quantidade_utilizada {real} DEFAULT 0,
             data_ultimo_uso TEXT,
-            turno_ultimo_uso TEXT
+            turno_ultimo_uso TEXT,
+            preco_unitario {real} DEFAULT 0,
+            desconto_unitario {real} DEFAULT 0,
+            desconto_valor {real} DEFAULT 0,
+            desconto_tipo TEXT DEFAULT 'fixo'
         )''',
 
         f'''CREATE TABLE IF NOT EXISTS abastecimentos (
@@ -215,6 +219,11 @@ def _schema(pg):
             usuario TEXT UNIQUE NOT NULL,
             senha_hash TEXT NOT NULL,
             poster_id TEXT NOT NULL,
+            token TEXT,
+            token_expira TEXT,
+            nivel TEXT DEFAULT 'master',
+            nome TEXT,
+            ativo INTEGER DEFAULT 1,
             data_criacao TIMESTAMP DEFAULT {agora}
         )''',
     ]
@@ -239,11 +248,23 @@ COLUNAS_NOVAS = {
         ('quantidade_utilizada', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('data_ultimo_uso', 'TEXT', 'TEXT'),
         ('turno_ultimo_uso', 'TEXT', 'TEXT'),
+        # preço e desconto congelados no momento da geração
+        ('preco_unitario', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
+        ('desconto_unitario', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
+        ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
+        ('desconto_tipo', "TEXT DEFAULT 'fixo'", "TEXT DEFAULT 'fixo'"),
     ],
     'produtos': [
         ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('desconto_tipo', "TEXT DEFAULT 'fixo'", "TEXT DEFAULT 'fixo'"),
         ('limite_litros', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
+    ],
+    'admin': [
+        ('token', 'TEXT', 'TEXT'),
+        ('token_expira', 'TEXT', 'TEXT'),
+        ('nivel', "TEXT DEFAULT 'master'", "TEXT DEFAULT 'master'"),
+        ('nome', 'TEXT', 'TEXT'),
+        ('ativo', 'INTEGER DEFAULT 1', 'INTEGER DEFAULT 1'),
     ],
 }
 

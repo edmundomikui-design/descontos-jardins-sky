@@ -555,3 +555,57 @@ html, body {
         page-break-inside: avoid;
     }
 }
+
+/* ===== PREÇO FINAL EM DESTAQUE NO CUPOM ===== */
+.preco-destaque {
+    background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
+    color: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    margin: 16px 0;
+}
+
+.preco-destaque-rotulo {
+    display: block;
+    font-size: 13px;
+    opacity: .9;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+.preco-destaque-valor {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    margin: 8px 0 6px;
+}
+
+.preco-destaque-valor #preco-final-destaque {
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.preco-destaque-unidade { font-size: 15px; opacity: .9; }
+
+.preco-destaque-antes {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 14px;
+    opacity: .95;
+    flex-wrap: wrap;
+}
+
+.economia-badge {
+    background: rgba(255, 255, 255, .2);
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 13px;
+}
+
+/* preços na lista de produtos */
+.produto-preco .preco-valor { font-weight: 600; }

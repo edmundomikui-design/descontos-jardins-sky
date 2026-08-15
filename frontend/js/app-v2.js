@@ -495,6 +495,31 @@ function mostrarCupomGerado(data) {
         setTxt('preco-final', `R$ ${Number(precoFinal).toFixed(2)}`);
     }
 
+    // ===== PREÇO FINAL EM DESTAQUE (o que o motorista quer ver) =====
+    const un = produtoSelecionado?.unidade || data.unidade || 'L';
+    const precoCheio = Number(data.preco_produto ?? 0);
+    const descUnidade = Number(data.desconto_por_unidade ?? 0);
+
+    if (precoFinal != null) {
+        setTxt('preco-final-destaque', `R$ ${Number(precoFinal).toFixed(2)}`);
+        setTxt('preco-final-unidade', `por ${un === 'L' ? 'litro' : un}`);
+        setTxt('preco-destaque-produto', `Você paga em ${data.produto_nome || 'combustível'}`);
+
+        const riscado = document.getElementById('preco-tabela-riscado');
+        if (riscado && precoCheio > 0 && descUnidade > 0) {
+            riscado.innerHTML = `de <s>R$ ${precoCheio.toFixed(2)}</s>`;
+        } else if (riscado) {
+            riscado.textContent = '';
+        }
+
+        const badge = document.getElementById('preco-economia-badge');
+        if (badge) {
+            badge.textContent = descUnidade > 0
+                ? `economia de R$ ${descUnidade.toFixed(2)}/${un}`
+                : '';
+        }
+    }
+
     // Saldo do cupom (quando já houve abastecimento parcial)
     const unidade = produtoSelecionado?.unidade || data.unidade || 'L';
     if (data.quantidade_restante != null) {
