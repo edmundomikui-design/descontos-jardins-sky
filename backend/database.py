@@ -17,8 +17,13 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 USANDO_POSTGRES = bool(DATABASE_URL)
 
 if USANDO_POSTGRES:
-    import psycopg2
-    import psycopg2.extras
+    try:
+        import psycopg2
+        import psycopg2.extras
+    except ImportError as e:
+        print(f"⚠️  psycopg2 não disponível ({e}). Usando SQLite.")
+        DATABASE_URL = ''
+        USANDO_POSTGRES = False
 
 
 # ==================== ADAPTADORES ====================
