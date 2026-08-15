@@ -3,6 +3,14 @@ const API_BASE_URL = 'https://descontos-jardins-sky-1.onrender.com/api';
 let clienteAtual = null;
 let produtosDisponiveis = [];
 let cuponsGerados = {}; // { produto_id: cupom_data }
+let produtoSelecionado = null;
+
+// Helper: escreve texto sem quebrar se o elemento não existir
+function setTxt(id, valor) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = valor;
+    else console.warn('Elemento não encontrado:', id);
+}
 
 // ===== INICIALIZAÇÃO =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -145,6 +153,10 @@ function validarFormulario(dados) {
 
 function mostrarErro(tipo, mensagem, classe = 'erro') {
     const elemento = document.getElementById(`${tipo}-erro`);
+    if (!elemento) {
+        alert(mensagem);
+        return;
+    }
     if (elemento) {
         elemento.textContent = mensagem;
         elemento.className = 'erro-msg show';
@@ -267,6 +279,7 @@ function criarProdutoHTML(produto) {
 
 async function gerarCupomProduto(produtoId) {
     try {
+        produtoSelecionado = produtosDisponiveis.find(p => p.id == produtoId) || null;
         const botao = event.target;
         botao.disabled = true;
         botao.textContent = '⏳ Gerando...';
@@ -307,24 +320,38 @@ async function gerarCupomProduto(produtoId) {
 function mostrarCupomGerado(data) {
     const container = document.getElementById('cupom-gerado') || criarCupomGerado();
 
-    document.getElementById('cupom-vazio').style.display = 'none';
+    const vazio = document.getElementById('cupom-vazio');
+    if (vazio) vazio.style.display = 'none';
+
+    const card = document.getElementById('cupom-card');
+    if (card) card.style.display = 'block';
     container.style.display = 'block';
 
-    // Atualiza dados do cupom
-    document.getElementById('qrcode-img').src = data.qrcode_image;
-    document.getElementById('qrcode-text').textContent = `Código: ${data.qrcode_data}`;
+    // QR code
+    const img = document.getElementById('qrcode-img');
+    if (img) img.src = data.qrcode_image;
+    setTxt('qrcode-text', `Código: ${data.qrcode_data}`);
 
     // Informações do produto
-    document.getElementById('produto-nome').textContent = data.produto_nome;
-    document.getElementById('produto-preco').textContent = `R$ ${data.preco_produto.toFixed(2)}`;
-    document.getElementById('produto-unidade').textContent = `/${produtosDisponiveis.find(p => p.id == data.cupom_id)?.unidade || 'un'}`;
+    setTxt('produto-nome', data.produto_nome);
+    setTxt('produto-preco', `R$ ${Number(data.preco_produto).toFixed(2)}`);
+    setTxt('produto-unidade', `/${produtoSelecionado?.unidade || 'un'}`);
 
     // Desconto
     const tipoLabel = data.desconto_tipo === 'percentual' ? '%' : 'R$';
-    document.getElementById('desconto-tipo').textContent = `${data.desconto_tipo === 'percentual' ? 'Percentual' : 'Reais'}`;
-    document.getElementById('desconto-valor').textContent = `${data.desconto_valor}${tipoLabel}`;
-    document.getElementById('desconto-aplicado').textContent = `- R$ ${data.desconto_aplicado.toFixed(2)}`;
-    document.getElementById('preco-final').textContent = `R$ ${data.preco_final.toFixed(2)}`;
+    setTxt('desconto-tipo', data.desconto_tipo === 'percentual' ? 'Percentual' : 'Reais');
+    setTxt('desconto-valor', `${data.desconto_valor}${tipoLabel}`);
+    setTxt('desconto-aplicado', `- R$ ${Number(data.desconto_aplicado).toFixed(2)}`);
+    setTxt('preco-final', `R$ ${Number(data.preco_final).toFixed(2)}`);
+
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function voltarProdutos() {
+    const card = document.getElementById('cupom-card');
+    if (card) card.style.display = 'none';
+    const lista = document.getElementById('produtos-lista');
+    if (lista) lista.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function criarCupomGerado() {

@@ -49,12 +49,24 @@
 
             <div id="cupom-gerado" class="cupom-gerado" style="display: none;">
                 <div class="qrcode-container">
-                    <img id="qrcode-img" src="" alt="QR Code">
+                    <img id="qrcode-img" src="" alt="QR Code" style="width: 200px; height: 200px; border: 2px solid #e0e0e0; border-radius: 8px;">
                     <p id="qrcode-text" class="qrcode-text"></p>
                 </div>
 
+                <div class="cupom-info" style="background: #e8f5e9; border-left: 4px solid #4CAF50;">
+                    <h4>📦 Produto</h4>
+                    <div class="info-row">
+                        <span class="label">Nome:</span>
+                        <span id="produto-nome" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Preço:</span>
+                        <span class="valor"><span id="produto-preco">-</span><span id="produto-unidade"></span></span>
+                    </div>
+                </div>
+
                 <div class="cupom-info">
-                    <h4>Informações do Desconto:</h4>
+                    <h4>💰 Desconto</h4>
                     <div class="info-row">
                         <span class="label">Tipo:</span>
                         <span id="desconto-tipo" class="valor">-</span>
@@ -62,6 +74,14 @@
                     <div class="info-row">
                         <span class="label">Valor:</span>
                         <span id="desconto-valor" class="valor">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Economia:</span>
+                        <span id="desconto-aplicado" class="valor">-</span>
+                    </div>
+                    <div class="info-row" style="margin-top: 12px; border-top: 1px solid #e0e0e0; padding-top: 12px; font-weight: 600;">
+                        <span class="label">Preço final:</span>
+                        <span id="preco-final" class="valor">-</span>
                     </div>
                 </div>
 
@@ -82,9 +102,13 @@
                 <button onclick="imprimirCupom()" class="btn btn-secondary">
                     📄 Imprimir Cupom
                 </button>
+
+                <button onclick="voltarProdutos()" class="btn" style="background: #999; margin-top: 10px;">
+                    ← Voltar aos Produtos
+                </button>
             </div>
 
-            <div id="erro-cupom" class="erro-msg"></div>
+            <div id="cupom-erro" class="erro-msg"></div>
         </div>
 
         <!-- POSTOS PARTICIPANTES -->
@@ -121,6 +145,6 @@
         </div>
     </div>
 
-    <script src="js/app.js"></script>
+    <script src="js/app-v2.js?v=3"></script>
 </body>
 </html>
