@@ -39,9 +39,8 @@ def validar_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
-def gerar_qrcode():
-    """Gera QR code único"""
-    qr_data = str(uuid.uuid4())[:12]
+def imagem_qrcode(qr_data):
+    """Gera a imagem (base64) de um código já existente"""
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(qr_data)
     qr.make(fit=True)
@@ -50,9 +49,12 @@ def gerar_qrcode():
     img_bytes = BytesIO()
     img.save(img_bytes, format='PNG')
     img_bytes.seek(0)
-    img_base64 = base64.b64encode(img_bytes.getvalue()).decode()
+    return base64.b64encode(img_bytes.getvalue()).decode()
 
-    return qr_data, img_base64
+def gerar_qrcode():
+    """Gera QR code único"""
+    qr_data = str(uuid.uuid4())[:12]
+    return qr_data, imagem_qrcode(qr_data)
 
 def obter_turno(hora=None):
     """Retorna o turno baseado na hora"""
@@ -318,6 +320,78 @@ def gerar_cupom():
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
+@app.route('/api/cupom/ativos', methods=['GET'])
+def cupons_ativos():
+    """Devolve os cupons do cliente gerados HOJE, com o QR code reconstruído.
+
+    Permite ao motorista recuperar o cupom mesmo depois de fechar o app.
+    """
+    try:
+        cliente_id = request.args.get('cliente_id')
+        if not cliente_id:
+            return jsonify({'erro': 'cliente_id é obrigatório'}), 400
+
+        hoje = datetime.now().date()
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id, nome, desconto_tipo, desconto_valor FROM clientes WHERE id = ?', (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        cursor.execute('''
+            SELECT c.id, c.qrcode, c.data_geracao, c.status,
+                   c.quantidade_permitida, c.quantidade_utilizada,
+                   p.id AS produto_id, p.nome AS produto_nome,
+                   p.preco_atual, p.unidade, p.icone
+            FROM cupons c
+            LEFT JOIN produtos p ON p.id = c.produto_id
+            WHERE c.cliente_id = ? AND c.data_geracao = ?
+            ORDER BY c.id DESC
+        ''', (cliente_id, hoje))
+        linhas = cursor.fetchall()
+        conn.close()
+
+        cupons = []
+        for c in linhas:
+            preco = c['preco_atual'] or 0
+            permitida = c['quantidade_permitida'] or 0
+            utilizada = c['quantidade_utilizada'] or 0
+
+            if cliente['desconto_tipo'] == 'percentual':
+                desconto_por_unidade = preco * (cliente['desconto_valor'] / 100)
+            else:
+                desconto_por_unidade = cliente['desconto_valor']
+
+            cupons.append({
+                'cupom_id': c['id'],
+                'qrcode_data': c['qrcode'],
+                'qrcode_image': f"data:image/png;base64,{imagem_qrcode(c['qrcode'])}",
+                'status': c['status'],
+                'produto_id': c['produto_id'],
+                'produto_nome': c['produto_nome'],
+                'produto_icone': c['icone'],
+                'unidade': c['unidade'],
+                'preco_produto': round(preco, 2),
+                'preco_unitario_com_desconto': round(preco - desconto_por_unidade, 2),
+                'desconto_tipo': cliente['desconto_tipo'],
+                'desconto_valor': cliente['desconto_valor'],
+                'desconto_por_unidade': round(desconto_por_unidade, 2),
+                'quantidade_permitida': permitida,
+                'quantidade_utilizada': utilizada,
+                'quantidade_restante': round(permitida - utilizada, 2),
+                'economia_total': round(desconto_por_unidade * permitida, 2),
+                'cliente_nome': cliente['nome']
+            })
+
+        return jsonify({'data': str(hoje), 'cupons': cupons}), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 @app.route('/api/cupom/usar', methods=['POST'])
 def usar_cupom():
     """Registra uso do cupom (chamado pelo caixa)"""
@@ -344,6 +418,13 @@ def usar_cupom():
 
         if not cupom:
             return jsonify({'erro': 'Cupom não encontrado ou expirado'}), 404
+
+        # Valida validade: cupom vale apenas no dia em que foi gerado
+        data_geracao = str(cupom['data_geracao'])[:10]
+        if data_geracao != str(datetime.now().date()):
+            return jsonify({
+                'erro': f'Cupom expirado (gerado em {data_geracao}). O cliente deve gerar um novo cupom hoje.'
+            }), 400
 
         # Valida produto
         if cupom['produto_id'] != produto_id:
@@ -398,8 +479,8 @@ def usar_cupom():
             cupom['cliente_id'],
             produto_id,
             poster_id,
-            agora.date(),
-            agora.time(),
+            agora.strftime('%Y-%m-%d'),
+            agora.strftime('%H:%M:%S'),
             turno,
             quantidade_agora,
             valor_sem_desconto,
@@ -418,7 +499,7 @@ def usar_cupom():
         ''', (
             nova_quantidade_utilizada,
             novo_status,
-            agora.date(),
+            agora.strftime('%Y-%m-%d'),
             turno,
             cupom['id']
         ))

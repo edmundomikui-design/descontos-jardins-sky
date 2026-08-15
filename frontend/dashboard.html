@@ -96,10 +96,15 @@
                 </div>
 
                 <div class="cupom-limites">
-                    <p>⚠️ Um cupom por dia | Válido apenas hoje</p>
+                    <p>⚠️ Um cupom por produto | Válido apenas hoje, até a meia-noite</p>
+                    <p id="cupom-saldo" style="margin-top:6px;"></p>
                 </div>
 
-                <button onclick="imprimirCupom()" class="btn btn-secondary">
+                <button onclick="salvarQRCode()" class="btn btn-primary">
+                    💾 Salvar QR Code no celular
+                </button>
+
+                <button onclick="imprimirCupom()" class="btn btn-secondary" style="margin-top: 10px;">
                     📄 Imprimir Cupom
                 </button>
 
@@ -144,6 +149,6 @@
         </div>
     </div>
 
-    <script src="js/app-v2.js?v=5"></script>
+    <script src="js/app-v2.js?v=6"></script>
 </body>
 </html>

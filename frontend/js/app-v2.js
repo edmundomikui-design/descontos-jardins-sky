@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.location.pathname.includes('dashboard')) {
         verificarAutenticacao();
-        carregarProdutos();
+        carregarProdutos().then(carregarCuponsAtivos);
     } else {
         setupLoginForm();
     }
@@ -256,9 +256,12 @@ function renderizarProdutos() {
 }
 
 function criarProdutoHTML(produto) {
-    const jaGerado = cuponsGerados[produto.id];
-    const btnClass = jaGerado ? 'btn-produto gerado' : 'btn-produto';
-    const btnTexto = jaGerado ? '✓ Gerado' : 'Gerar Cupom';
+    const cupom = cuponsGerados[produto.id];
+    const btnClass = cupom ? 'btn-produto gerado' : 'btn-produto';
+    const acao = cupom
+        ? `verCupom(${produto.id})`
+        : `gerarCupomProduto(${produto.id}, this)`;
+    const btnTexto = cupom ? '👁️ Ver cupom' : 'Gerar Cupom';
 
     return `
         <div class="produto-item">
@@ -270,11 +273,106 @@ function criarProdutoHTML(produto) {
                 <div class="preco-valor">R$ ${produto.preco.toFixed(2)}</div>
                 <div class="preco-unidade">/${produto.unidade}</div>
             </div>
-            <button class="${btnClass}" onclick="gerarCupomProduto(${produto.id}, this)" ${jaGerado ? 'disabled' : ''}>
+            <button class="${btnClass}" onclick="${acao}">
                 ${btnTexto}
             </button>
         </div>
     `;
+}
+
+// ===== RECUPERAÇÃO DO CUPOM DO DIA =====
+async function carregarCuponsAtivos() {
+    const clienteId = (clienteAtual && clienteAtual.id) || localStorage.getItem('cliente_id');
+    if (!clienteId) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/cupom/ativos?cliente_id=${clienteId}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.warn('[cupom] não foi possível recuperar cupons:', data.erro);
+            usarCacheLocal();
+            return;
+        }
+
+        cuponsGerados = {};
+        (data.cupons || []).forEach(c => { cuponsGerados[c.produto_id] = c; });
+
+        localStorage.setItem('cupons_do_dia', JSON.stringify({
+            data: data.data,
+            cupons: data.cupons || []
+        }));
+
+        console.log('[cupom] cupons de hoje recuperados:', (data.cupons || []).length);
+        renderizarProdutos();
+
+        const primeiro = (data.cupons || [])[0];
+        if (primeiro) {
+            produtoSelecionado = produtosDisponiveis.find(p => p.id == primeiro.produto_id) || null;
+            mostrarCupomGerado(primeiro);
+        }
+    } catch (erro) {
+        console.warn('[cupom] offline, usando cache local:', erro.message);
+        usarCacheLocal();
+    }
+}
+
+function salvarCacheLocal() {
+    localStorage.setItem('cupons_do_dia', JSON.stringify({
+        data: new Date().toISOString().slice(0, 10),
+        cupons: Object.values(cuponsGerados)
+    }));
+}
+
+// Sem internet no posto: usa o cupom guardado no celular (se for de hoje)
+function usarCacheLocal() {
+    try {
+        const bruto = localStorage.getItem('cupons_do_dia');
+        if (!bruto) return;
+
+        const cache = JSON.parse(bruto);
+        const hoje = new Date().toISOString().slice(0, 10);
+        if (cache.data !== hoje) {
+            localStorage.removeItem('cupons_do_dia');
+            return;
+        }
+
+        cuponsGerados = {};
+        (cache.cupons || []).forEach(c => { cuponsGerados[c.produto_id] = c; });
+        renderizarProdutos();
+
+        const primeiro = (cache.cupons || [])[0];
+        if (primeiro) mostrarCupomGerado(primeiro);
+    } catch (e) {
+        console.warn('[cupom] cache local inválido');
+    }
+}
+
+function verCupom(produtoId) {
+    const cupom = cuponsGerados[produtoId];
+    if (!cupom) return;
+    produtoSelecionado = produtosDisponiveis.find(p => p.id == produtoId) || null;
+    mostrarCupomGerado(cupom);
+}
+
+// Salva a imagem do QR code na galeria/downloads do celular
+function salvarQRCode() {
+    const img = document.getElementById('qrcode-img');
+    if (!img || !img.src) {
+        mostrarAviso('Nenhum cupom aberto para salvar.');
+        return;
+    }
+
+    const nomeProduto = (document.getElementById('produto-nome')?.textContent || 'cupom')
+        .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    const link = document.createElement('a');
+    link.href = img.src;
+    link.download = `cupom-${nomeProduto}-${hoje}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 async function gerarCupomProduto(produtoId, botao) {
@@ -324,7 +422,9 @@ async function gerarCupomProduto(produtoId, botao) {
         console.log('[cupom] status', response.status, data);
 
         if (response.ok) {
-            cuponsGerados[produtoId] = true;
+            data.produto_id = data.produto_id || produtoId;
+            cuponsGerados[produtoId] = data;
+            salvarCacheLocal();
             mostrarCupomGerado(data);
             renderizarProdutos();
         } else {
@@ -393,6 +493,14 @@ function mostrarCupomGerado(data) {
     const precoFinal = data.preco_final ?? data.preco_unitario_com_desconto;
     if (precoFinal != null) {
         setTxt('preco-final', `R$ ${Number(precoFinal).toFixed(2)}`);
+    }
+
+    // Saldo do cupom (quando já houve abastecimento parcial)
+    const unidade = produtoSelecionado?.unidade || data.unidade || 'L';
+    if (data.quantidade_restante != null) {
+        setTxt('cupom-saldo', `Saldo disponível: ${data.quantidade_restante}${unidade} de ${data.quantidade_permitida}${unidade}`);
+    } else if (data.quantidade_permitida != null) {
+        setTxt('cupom-saldo', `Limite: ${data.quantidade_permitida}${unidade}`);
     }
 
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
