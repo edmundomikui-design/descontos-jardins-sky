@@ -270,51 +270,91 @@ function criarProdutoHTML(produto) {
                 <div class="preco-valor">R$ ${produto.preco.toFixed(2)}</div>
                 <div class="preco-unidade">/${produto.unidade}</div>
             </div>
-            <button class="${btnClass}" onclick="gerarCupomProduto(${produto.id})" ${jaGerado ? 'disabled' : ''}>
+            <button class="${btnClass}" onclick="gerarCupomProduto(${produto.id}, this)" ${jaGerado ? 'disabled' : ''}>
                 ${btnTexto}
             </button>
         </div>
     `;
 }
 
-async function gerarCupomProduto(produtoId) {
+async function gerarCupomProduto(produtoId, botao) {
+    botao = botao || (typeof event !== 'undefined' && event ? event.target : null);
+    const restaurarBotao = () => {
+        if (botao) {
+            botao.disabled = false;
+            botao.textContent = 'Gerar Cupom';
+        }
+    };
+
     try {
+        console.log('[cupom] clique no produto', produtoId);
         produtoSelecionado = produtosDisponiveis.find(p => p.id == produtoId) || null;
-        const botao = event.target;
-        botao.disabled = true;
-        botao.textContent = '⏳ Gerando...';
+
+        if (botao) {
+            botao.disabled = true;
+            botao.textContent = '⏳ Gerando...';
+        }
+
+        const clienteId = (clienteAtual && clienteAtual.id) || localStorage.getItem('cliente_id');
+        if (!clienteId) {
+            mostrarAviso('Sessão expirada. Faça login novamente.');
+            restaurarBotao();
+            setTimeout(() => (window.location.href = 'index.html'), 1500);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // Render pode demorar no 1º acesso
 
         const response = await fetch(`${API_BASE_URL}/cupom/gerar`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                cliente_id: clienteAtual.id,
+                cliente_id: Number(clienteId),
                 produto_id: produtoId
-            })
+            }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
-        const data = await response.json();
+        const texto = await response.text();
+        let data = {};
+        try { data = JSON.parse(texto); } catch (e) { data = { erro: texto.slice(0, 200) }; }
+
+        console.log('[cupom] status', response.status, data);
 
         if (response.ok) {
-            // Registra que cupom foi gerado para este produto
             cuponsGerados[produtoId] = true;
-
-            // Mostra cupom gerado
             mostrarCupomGerado(data);
-
-            // Atualiza lista de produtos
             renderizarProdutos();
         } else {
-            mostrarErro('cupom', data.erro || 'Erro ao gerar cupom');
-            botao.disabled = false;
-            botao.textContent = 'Gerar Cupom';
+            mostrarAviso(data.erro || `Erro ${response.status} ao gerar cupom`);
+            restaurarBotao();
         }
     } catch (erro) {
-        mostrarErro('cupom', 'Erro ao conectar ao servidor');
-        console.error(erro);
-        event.target.disabled = false;
-        event.target.textContent = 'Gerar Cupom';
+        console.error('[cupom] falha:', erro);
+        const msg = erro.name === 'AbortError'
+            ? 'O servidor demorou demais para responder. Tente novamente em alguns segundos.'
+            : `Erro ao conectar ao servidor: ${erro.message}`;
+        mostrarAviso(msg);
+        restaurarBotao();
     }
+}
+
+// Aviso sempre visível (aparece no topo da lista de produtos)
+function mostrarAviso(mensagem) {
+    let box = document.getElementById('cupom-erro');
+    if (!box) {
+        const lista = document.getElementById('produtos-lista');
+        if (!lista) { alert(mensagem); return; }
+        box = document.createElement('div');
+        box.id = 'cupom-erro';
+        lista.parentNode.insertBefore(box, lista);
+    }
+    box.style.cssText = 'display:block;background:#ffebee;color:#c62828;padding:12px;border-radius:8px;margin:10px 0;font-size:14px;';
+    box.textContent = mensagem;
+    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => { box.style.display = 'none'; }, 8000);
 }
 
 function mostrarCupomGerado(data) {

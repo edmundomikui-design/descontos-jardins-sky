@@ -68,9 +68,7 @@ function setupLoginForm() {
                 endereco: document.getElementById('cadastro-endereco').value,
                 email: document.getElementById('cadastro-email').value,
                 senha: document.getElementById('cadastro-senha').value,
-                confirmacao: document.getElementById('cadastro-confirmacao').value,
-                desconto_tipo: document.getElementById('cadastro-desconto-tipo').value,
-                desconto_valor: document.getElementById('cadastro-desconto-valor').value
+                confirmacao: document.getElementById('cadastro-confirmacao').value
             };
 
             await fazerCadastro(dados);
