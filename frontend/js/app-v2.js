@@ -381,8 +381,19 @@ function mostrarCupomGerado(data) {
     const tipoLabel = data.desconto_tipo === 'percentual' ? '%' : 'R$';
     setTxt('desconto-tipo', data.desconto_tipo === 'percentual' ? 'Percentual' : 'Reais');
     setTxt('desconto-valor', `${data.desconto_valor}${tipoLabel}`);
-    setTxt('desconto-aplicado', `- R$ ${Number(data.desconto_aplicado).toFixed(2)}`);
-    setTxt('preco-final', `R$ ${Number(data.preco_final).toFixed(2)}`);
+    // Economia: backend v2 devolve economia_total + quantidade_permitida
+    const economia = data.desconto_aplicado ?? data.economia_total;
+    if (economia != null) {
+        const limite = data.quantidade_permitida
+            ? ` (até ${data.quantidade_permitida}${produtoSelecionado?.unidade || 'L'})`
+            : '';
+        setTxt('desconto-aplicado', `- R$ ${Number(economia).toFixed(2)}${limite}`);
+    }
+
+    const precoFinal = data.preco_final ?? data.preco_unitario_com_desconto;
+    if (precoFinal != null) {
+        setTxt('preco-final', `R$ ${Number(precoFinal).toFixed(2)}`);
+    }
 
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

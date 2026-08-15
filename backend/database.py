@@ -43,6 +43,10 @@ def init_db():
             poster_id TEXT,
             foto_url TEXT,
             status TEXT DEFAULT 'pendente',
+            quantidade_permitida REAL DEFAULT 50,
+            quantidade_utilizada REAL DEFAULT 0,
+            data_ultimo_uso DATE,
+            turno_ultimo_uso TEXT,
             FOREIGN KEY (cliente_id) REFERENCES clientes(id),
             FOREIGN KEY (produto_id) REFERENCES produtos(id)
         )
@@ -127,6 +131,24 @@ def init_db():
             (id, nome, tipo, preco_atual, unidade, icone)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', p)
+
+    # ===== MIGRAÇÕES (bancos criados antes destas colunas) =====
+    colunas_novas = {
+        'cupons': [
+            ('quantidade_permitida', 'REAL DEFAULT 50'),
+            ('quantidade_utilizada', 'REAL DEFAULT 0'),
+            ('data_ultimo_uso', 'DATE'),
+            ('turno_ultimo_uso', 'TEXT'),
+        ]
+    }
+
+    for tabela, colunas in colunas_novas.items():
+        cursor.execute(f'PRAGMA table_info({tabela})')
+        existentes = {linha[1] for linha in cursor.fetchall()}
+        for nome, tipo in colunas:
+            if nome not in existentes:
+                cursor.execute(f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}')
+                print(f"🔧 Migração: coluna {tabela}.{nome} adicionada")
 
     conn.commit()
     conn.close()

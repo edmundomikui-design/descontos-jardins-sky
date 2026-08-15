@@ -1,6 +1,6 @@
 // Service Worker para PWA - Cache simples
 
-const CACHE_NAME = 'descontos-jardins-sky-v4';
+const CACHE_NAME = 'descontos-jardins-sky-v5';
 const urlsToCache = [
   '/',
   '/index.html',
