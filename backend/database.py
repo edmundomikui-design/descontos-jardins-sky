@@ -150,6 +150,8 @@ def _schema(pg):
             confirmado INTEGER DEFAULT 0,
             aceita_promocoes INTEGER DEFAULT 0,
             data_consentimento TEXT,
+            aceita_parceiros INTEGER DEFAULT 0,
+            data_consentimento_parceiros TEXT,
             data_criacao TIMESTAMP DEFAULT {agora},
             data_atualizacao TIMESTAMP DEFAULT {agora}
         )''',
@@ -263,9 +265,11 @@ PRODUTOS_PADRAO = [
 # Colunas acrescentadas depois — aplicadas em bancos que já existem
 COLUNAS_NOVAS = {
     'clientes': [
-        # Consentimento LGPD para envio de promoções
+        # Consentimento LGPD (avisos do app: obrigatório / parceiros: opcional)
         ('aceita_promocoes', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
         ('data_consentimento', 'TEXT', 'TEXT'),
+        ('aceita_parceiros', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
+        ('data_consentimento_parceiros', 'TEXT', 'TEXT'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),

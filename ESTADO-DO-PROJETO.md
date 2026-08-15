@@ -39,6 +39,15 @@ use **Manual Deploy → Deploy latest commit** no painel dele.
 
 ### App do cliente
 - Cadastro e login do motorista
+- **Aceite de mensagens no cadastro** — dois consentimentos separados:
+  - *Avisos do aplicativo* (**obrigatório**): cupons do dia, mudanças de preço e ofertas
+    por tempo limitado dos postos CAJ e SKY. É a própria função do app, por isso pode ser
+    exigido. Validado no navegador e também no backend (erro 400 sem o aceite).
+    Grava `clientes.aceita_promocoes` + `data_consentimento`.
+  - *Promoções de parceiros* (**opcional**): marketing puro, marcado à parte.
+    Grava `clientes.aceita_parceiros` + `data_consentimento_parceiros`.
+
+  A data de cada aceite é a prova exigida pela LGPD.
 - Lista de produtos com preços atualizados
 - Geração de cupom com QR code, um por produto por dia
 - **Preço final por litro em destaque**, com preço de bomba riscado ao lado
@@ -82,6 +91,12 @@ Três níveis de acesso:
 - [ ] Tela para o frentista registrar o abastecimento lendo o QR code
       (hoje a API `/api/cupom/usar` existe, mas não há tela)
 - [ ] Trocar o servidor de desenvolvimento do Flask por gunicorn (~10 min)
+- [ ] Tela no painel para listar/exportar quem aceitou receber mensagens
+      (a base do disparo de campanhas), separando avisos do app x parceiros
+- [ ] **Push de promoção-relâmpago** — notificação curta com validade de horário
+      ("até as 14h a gasolina sai a R$ X"). O service-worker já existe; falta o
+      Web Push (chaves VAPID no backend, permissão no app) e uma tela no painel
+      para escrever a mensagem, escolher a validade e disparar.
 - [ ] Convênio com empresas vizinhas via RH (ideia original do projeto)
 - [ ] Preço separado por posto, se algum dia CAJ e SKY divergirem
 

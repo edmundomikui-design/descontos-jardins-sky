@@ -69,7 +69,8 @@ function setupLoginForm() {
                 email: document.getElementById('cadastro-email').value,
                 senha: document.getElementById('cadastro-senha').value,
                 confirmacao: document.getElementById('cadastro-confirmacao').value,
-                aceita_promocoes: document.getElementById('cadastro-promocoes').checked
+                aceita_promocoes: document.getElementById('cadastro-promocoes').checked,
+                aceita_parceiros: document.getElementById('cadastro-parceiros').checked
             };
             await fazerCadastro(dados);
         });
@@ -105,6 +106,11 @@ async function fazerCadastro(dados) {
 
     if (dados.senha !== dados.confirmacao) {
         mostrarErro('cadastro', 'As senhas não correspondem');
+        return;
+    }
+
+    if (!dados.aceita_promocoes) {
+        mostrarErro('cadastro', 'É preciso aceitar os avisos do aplicativo (cupons e preços do dia) para se cadastrar');
         return;
     }
 

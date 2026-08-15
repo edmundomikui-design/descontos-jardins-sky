@@ -218,6 +218,23 @@ def cadastro():
         if len(data.get('endereco', '')) < 10:
             return jsonify({'erro': 'Endereço incompleto'}), 400
 
+        # Dois aceites, guardados com a data (prova exigida pela LGPD):
+        #  - avisos do aplicativo (cupons e preços do dia): OBRIGATÓRIO, é a função do app
+        #  - promoções de parceiros: OPCIONAL, marketing puro
+        def marcado(v):
+            return v in (True, 1, '1', 'true', 'on')
+
+        aceita_promocoes = 1 if marcado(data.get('aceita_promocoes')) else 0
+        if not aceita_promocoes:
+            return jsonify({
+                'erro': 'É preciso aceitar os avisos do aplicativo (cupons e preços do dia) para se cadastrar'
+            }), 400
+
+        aceita_parceiros = 1 if marcado(data.get('aceita_parceiros')) else 0
+        agora_iso = datetime.now().isoformat()
+        data_consentimento = agora_iso
+        data_consentimento_parceiros = agora_iso if aceita_parceiros else None
+
         cpf = re.sub(r'\D', '', data.get('cpf'))
 
         conn = get_db()
@@ -233,15 +250,11 @@ def cadastro():
 
         senha_hash = generate_password_hash(data.get('senha'))
 
-        # Consentimento LGPD: opcional, guardado com a data em que foi dado
-        aceita_promocoes = 1 if data.get('aceita_promocoes') in (True, 1, '1', 'true', 'on') else 0
-        data_consentimento = datetime.now().isoformat() if aceita_promocoes else None
-
         cursor.execute('''
             INSERT INTO clientes
             (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo, desconto_valor,
-             aceita_promocoes, data_consentimento)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             aceita_promocoes, data_consentimento, aceita_parceiros, data_consentimento_parceiros)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cpf,
             data.get('nome'),
@@ -253,7 +266,9 @@ def cadastro():
             'fixo',  # Tipo: valor fixo em reais
             1.00,    # Desconto padrão: R$ 1,00 por litro
             aceita_promocoes,
-            data_consentimento
+            data_consentimento,
+            aceita_parceiros,
+            data_consentimento_parceiros
         ))
 
         conn.commit()

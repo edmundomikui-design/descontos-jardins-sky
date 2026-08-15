@@ -638,6 +638,12 @@ html, body {
     cursor: pointer;
 }
 
+.checkbox-secundario {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e6ed;
+}
+
 .form-consentimento .ajuda {
     display: block;
     margin-top: 6px;

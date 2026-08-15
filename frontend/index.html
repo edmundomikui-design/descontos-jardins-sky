@@ -85,11 +85,18 @@
 
                     <div class="form-group form-consentimento">
                         <label class="checkbox-label">
-                            <input type="checkbox" id="cadastro-promocoes" name="aceita_promocoes">
-                            <span>Aceito receber mensagens com promoções e novidades do aplicativo
-                            por WhatsApp, SMS e e-mail.</span>
+                            <input type="checkbox" id="cadastro-promocoes" name="aceita_promocoes" required>
+                            <span><strong>Aceito receber os avisos do aplicativo</strong> — cupons do dia,
+                            mudanças de preço e ofertas por tempo limitado dos postos CAJ e SKY,
+                            por notificação, WhatsApp, SMS ou e-mail.</span>
                         </label>
-                        <small class="ajuda">Opcional. Você pode cancelar quando quiser.</small>
+                        <small class="ajuda">Obrigatório: é assim que você fica sabendo o desconto do dia.</small>
+
+                        <label class="checkbox-label checkbox-secundario">
+                            <input type="checkbox" id="cadastro-parceiros" name="aceita_parceiros">
+                            <span>Também quero receber promoções de parceiros e novidades do clube.</span>
+                        </label>
+                        <small class="ajuda">Opcional. Pode cancelar quando quiser.</small>
                     </div>
 
                     <button type="submit" class="btn btn-primary">Cadastrar</button>
