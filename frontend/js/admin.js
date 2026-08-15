@@ -103,14 +103,20 @@ function abrirPainel() {
     document.getElementById('tela-login').style.display = 'none';
     document.getElementById('painel').style.display = 'block';
 
-    const ehMaster = sessao.nivel === 'master';
-    document.getElementById('badge-usuario').textContent =
-        `${sessao.nome || sessao.usuario} · ${ehMaster ? 'Master' : 'Caixa'}`;
-    document.getElementById('badge-usuario').className = `badge ${ehMaster ? 'badge-master' : 'badge-caixa'}`;
+    const nivel = sessao.nivel;
+    const ehMaster = nivel === 'master';
+    const podeAlterar = nivel === 'master' || nivel === 'gerencia';
 
-    // Caixa não vê as abas de alteração
+    document.getElementById('badge-usuario').textContent =
+        `${sessao.nome || sessao.usuario} · ${rotuloNivel(nivel)}`;
+    document.getElementById('badge-usuario').className = `badge badge-${nivel}`;
+
+    // Caixa não altera nada; Gerência não mexe em usuários
     document.querySelectorAll('.somente-master').forEach(el => {
         el.style.display = ehMaster ? '' : 'none';
+    });
+    document.querySelectorAll('.somente-gerencia').forEach(el => {
+        el.style.display = podeAlterar ? '' : 'none';
     });
 
     document.getElementById('caixa-data').value = new Date().toISOString().slice(0, 10);
@@ -154,6 +160,7 @@ function trocarAba(nome) {
     document.getElementById(`aba-${nome}`).style.display = 'block';
 
     if (nome === 'precos') carregarProdutosAdmin();
+    if (nome === 'auditoria') carregarAuditoria();
     if (nome === 'usuarios') carregarUsuarios();
     if (nome === 'caixa') carregarCaixa();
 }
@@ -379,12 +386,24 @@ function renderizarProdutosAdmin() {
         oleo: produtosAdmin.filter(p => p.tipo === 'oleo')
     };
 
+    const ehMaster = sessao.nivel === 'master';
+
     const linha = p => `
-        <div class="produto-linha" data-id="${p.id}">
+        <div class="produto-linha" data-id="${p.id}"
+             data-custo="${p.preco_custo || 0}" data-margem="${p.margem_minima ?? 10}">
             <div class="produto-titulo">
                 <span class="icone">${p.icone || ''}</span>
                 <input type="text" class="in-nome" value="${p.nome.replace(/"/g, '&quot;')}"
-                       title="Clique para renomear o produto">
+                       title="Clique para renomear o produto" ${ehMaster ? '' : 'readonly'}>
+            </div>
+
+            <div class="campo campo-custo">
+                <label>Preço de custo ${ehMaster ? '' : '🔒'}</label>
+                <div class="input-prefixo">
+                    <span>R$</span>
+                    <input type="number" step="0.01" min="0" class="in-custo" value="${p.preco_custo || 0}"
+                           oninput="recalcularLinha(${p.id})" ${ehMaster ? '' : 'readonly'}>
+                </div>
             </div>
 
             <div class="campo">
@@ -414,10 +433,18 @@ function renderizarProdutosAdmin() {
                 <input type="number" step="1" min="0" class="in-limite" value="${p.limite_litros}">
             </div>
 
+            ${ehMaster ? `
+            <div class="campo">
+                <label>Margem mín. (%)</label>
+                <input type="number" step="1" min="0" class="in-margem" value="${p.margem_minima ?? 10}"
+                       oninput="recalcularLinha(${p.id})" title="Piso que a Gerência precisa respeitar">
+            </div>` : ''}
+
             <div class="campo resultado">
                 <label>Cliente paga</label>
                 <strong class="preco-final" id="final-${p.id}">${reais(p.preco_final)}</strong>
                 <span class="por-unidade">por ${p.unidade}</span>
+                <span class="margem-info" id="margem-${p.id}"></span>
             </div>
 
             <div class="campo campo-ativo">
@@ -439,6 +466,68 @@ function renderizarProdutosAdmin() {
             ${grupos.oleo.map(linha).join('')}
         </div>
     `;
+
+    produtosAdmin.forEach(p => recalcularLinha(p.id));
+}
+
+// ===================== AUDITORIA =====================
+async function carregarAuditoria() {
+    const container = document.getElementById('lista-auditoria');
+    container.innerHTML = '<p class="carregando">Carregando histórico...</p>';
+
+    try {
+        const params = new URLSearchParams();
+        const ini = document.getElementById('audit-inicio').value;
+        const fim = document.getElementById('audit-fim').value;
+        const acao = document.getElementById('audit-acao').value;
+        if (ini) params.append('data_inicio', ini);
+        if (fim) params.append('data_fim', fim);
+        if (acao) params.append('acao', acao);
+
+        const d = await api(`/admin/auditoria?${params}`);
+
+        if (!d.registros.length) {
+            container.innerHTML = '<p class="vazio">Nenhuma alteração registrada neste período.</p>';
+            return;
+        }
+
+        container.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr><th>Quando</th><th>Quem</th><th>Produto</th><th>O que mudou</th>
+                        <th>De</th><th>Para</th><th>Situação</th></tr>
+                </thead>
+                <tbody>
+                    ${d.registros.map(r => `
+                        <tr class="${r.acao === 'BLOQUEIO' ? 'linha-bloqueio' : ''}">
+                            <td>${formatarDataHora(r.data_hora)}</td>
+                            <td>${r.usuario} <span class="badge badge-${r.nivel}">${rotuloNivel(r.nivel)}</span></td>
+                            <td>${r.produto || '-'}</td>
+                            <td>${r.campo_rotulo || '-'}</td>
+                            <td>${r.valor_anterior ?? '-'}</td>
+                            <td><strong>${r.valor_novo ?? '-'}</strong></td>
+                            <td>${r.acao === 'BLOQUEIO'
+                                ? `<span class="tag-bloqueio" title="${(r.detalhe || '').replace(/"/g, '&quot;')}">⛔ Bloqueado</span>`
+                                : '<span class="tag-ok">✅ Aplicado</span>'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            <p class="ajuda">Passe o mouse sobre "Bloqueado" para ver o motivo.</p>
+        `;
+    } catch (erro) {
+        container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+function formatarDataHora(dh) {
+    if (!dh) return '';
+    const [data, hora] = dh.split(' ');
+    return `${data.split('-').reverse().join('/')} ${(hora || '').slice(0, 5)}`;
+}
+
+function rotuloNivel(n) {
+    return n === 'master' ? 'Master' : n === 'gerencia' ? 'Gerência' : 'Caixa';
 }
 
 function recalcularLinha(id) {
@@ -448,13 +537,14 @@ function recalcularLinha(id) {
     const preco = parseFloat(linha.querySelector('.in-preco').value) || 0;
     const desconto = parseFloat(linha.querySelector('.in-desconto').value) || 0;
     const tipo = linha.querySelector('.in-tipo').value;
+    const custo = parseFloat(linha.querySelector('.in-custo')?.value ?? linha.dataset.custo) || 0;
+    const margemMin = parseFloat(linha.querySelector('.in-margem')?.value ?? linha.dataset.margem) || 0;
 
     const porUnidade = tipo === 'percentual' ? preco * (desconto / 100) : desconto;
-    const final = preco - porUnidade;
+    const final = Math.round((preco - porUnidade) * 100) / 100;
 
     const el = document.getElementById(`final-${id}`);
     el.textContent = reais(final);
-    el.classList.toggle('erro', final < 0);
 
     const dica = document.getElementById(`dica-${id}`);
     if (dica) {
@@ -462,6 +552,48 @@ function recalcularLinha(id) {
             ? `= ${reais(porUnidade)} de desconto`
             : '';
     }
+
+    // ===== INDICADOR DE MARGEM =====
+    const info = document.getElementById(`margem-${id}`);
+    const ehMaster = sessao.nivel === 'master';
+    const piso = Math.round(custo * (1 + margemMin / 100) * 100) / 100;
+    let estado = 'ok';
+
+    if (final < 0) {
+        estado = 'bloqueado';
+        info.textContent = '⛔ preço negativo';
+    } else if (!custo) {
+        info.textContent = ehMaster ? 'informe o custo' : '⛔ custo não cadastrado';
+        estado = ehMaster ? 'neutro' : 'bloqueado';
+    } else if (final < custo) {
+        estado = 'bloqueado';
+        info.textContent = `⛔ abaixo do custo (prejuízo de ${reais(custo - final)})`;
+    } else if (!ehMaster && final < piso) {
+        estado = 'bloqueado';
+        info.textContent = `⛔ mínimo do seu nível: ${reais(piso)}`;
+    } else {
+        const lucro = final - custo;
+        const perc = (lucro / custo) * 100;
+        estado = (!ehMaster && final < piso * 1.02) || perc < margemMin ? 'alerta' : 'ok';
+        info.textContent = `margem ${reais(lucro)} (${perc.toFixed(1)}%)`;
+    }
+
+    el.classList.toggle('erro', estado === 'bloqueado');
+    info.className = `margem-info ${estado}`;
+    linha.classList.toggle('linha-bloqueada', estado === 'bloqueado');
+
+    atualizarBotaoSalvar();
+}
+
+function atualizarBotaoSalvar() {
+    const botao = document.getElementById('btn-salvar-produtos');
+    if (!botao) return;
+
+    const bloqueadas = document.querySelectorAll('.produto-linha.linha-bloqueada').length;
+    botao.disabled = bloqueadas > 0;
+    botao.textContent = bloqueadas > 0
+        ? `⛔ ${bloqueadas} produto(s) com margem inválida`
+        : '💾 Salvar alterações';
 }
 
 async function salvarProdutos() {
@@ -474,6 +606,12 @@ async function salvarProdutos() {
             id: parseInt(linha.dataset.id),
             nome: linha.querySelector('.in-nome').value.trim(),
             preco_atual: parseFloat(linha.querySelector('.in-preco').value) || 0,
+            ...(linha.querySelector('.in-custo') && !linha.querySelector('.in-custo').readOnly ? {
+                preco_custo: parseFloat(linha.querySelector('.in-custo').value) || 0
+            } : {}),
+            ...(linha.querySelector('.in-margem') ? {
+                margem_minima: parseFloat(linha.querySelector('.in-margem').value) || 0
+            } : {}),
             desconto_valor: parseFloat(linha.querySelector('.in-desconto').value) || 0,
             desconto_tipo: linha.querySelector('.in-tipo').value,
             limite_litros: parseFloat(linha.querySelector('.in-limite').value) || 0,
@@ -510,8 +648,7 @@ async function carregarUsuarios() {
                         <tr>
                             <td><strong>${u.usuario}</strong></td>
                             <td>${u.nome}</td>
-                            <td><span class="badge ${u.nivel === 'master' ? 'badge-master' : 'badge-caixa'}">
-                                ${u.nivel === 'master' ? 'Master' : 'Caixa'}</span></td>
+                            <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
                             <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
                             <td>
                                 <button class="btn-mini" onclick="alternarUsuario(${u.id}, ${u.ativo ? 0 : 1})">

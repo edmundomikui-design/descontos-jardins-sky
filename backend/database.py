@@ -160,11 +160,28 @@ def _schema(pg):
             unidade TEXT NOT NULL,
             icone TEXT,
             ativo INTEGER DEFAULT 1,
+            preco_custo {real} DEFAULT 0,
+            margem_minima {real} DEFAULT 10,
             desconto_valor {real} DEFAULT 0,
             desconto_tipo TEXT DEFAULT 'fixo',
             limite_litros {real} DEFAULT 50,
             data_atualizacao TEXT,
             criado_em TIMESTAMP DEFAULT {agora}
+        )''',
+
+        f'''CREATE TABLE IF NOT EXISTS auditoria (
+            id {serial},
+            data_hora TEXT NOT NULL,
+            admin_id INTEGER,
+            admin_usuario TEXT,
+            admin_nivel TEXT,
+            acao TEXT NOT NULL,
+            produto_id INTEGER,
+            produto_nome TEXT,
+            campo TEXT,
+            valor_anterior TEXT,
+            valor_novo TEXT,
+            detalhe TEXT
         )''',
 
         f'''CREATE TABLE IF NOT EXISTS cupons (
@@ -258,6 +275,8 @@ COLUNAS_NOVAS = {
         ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('desconto_tipo', "TEXT DEFAULT 'fixo'", "TEXT DEFAULT 'fixo'"),
         ('limite_litros', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
+        ('preco_custo', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
+        ('margem_minima', 'DOUBLE PRECISION DEFAULT 10', 'REAL DEFAULT 10'),
     ],
     'admin': [
         ('token', 'TEXT', 'TEXT'),

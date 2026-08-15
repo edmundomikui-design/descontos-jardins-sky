@@ -111,7 +111,7 @@ def exige_admin(f):
 
 
 def exige_master(f):
-    """Somente o nível Master — alterar preços, descontos e usuários."""
+    """Somente o nível Master — usuários e configurações sensíveis."""
     @wraps(f)
     def wrapper(*args, **kwargs):
         admin = admin_do_token()
@@ -119,11 +119,86 @@ def exige_master(f):
             return jsonify({'erro': 'Acesso restrito. Faça login.'}), 401
         if admin['nivel'] != 'master':
             return jsonify({
+                'erro': 'Permissão negada. Somente o administrador Master pode fazer isso.'
+            }), 403
+        request.admin = admin
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def exige_gerencia(f):
+    """Master ou Gerência — alterar preços e descontos (com trava de margem)."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        admin = admin_do_token()
+        if not admin:
+            return jsonify({'erro': 'Acesso restrito. Faça login.'}), 401
+        if admin['nivel'] not in ('master', 'gerencia'):
+            return jsonify({
                 'erro': 'Permissão negada. Seu acesso é de consulta (Caixa) e não permite alterações.'
             }), 403
         request.admin = admin
         return f(*args, **kwargs)
     return wrapper
+
+
+def registrar_auditoria(cursor, admin, acao, produto_id=None, produto_nome=None,
+                        campo=None, valor_anterior=None, valor_novo=None, detalhe=None):
+    """Grava quem mudou o quê, quando e de qual valor para qual."""
+    cursor.execute('''
+        INSERT INTO auditoria
+        (data_hora, admin_id, admin_usuario, admin_nivel, acao,
+         produto_id, produto_nome, campo, valor_anterior, valor_novo, detalhe)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        admin['id'] if admin else None,
+        admin['usuario'] if admin else None,
+        admin['nivel'] if admin else None,
+        acao, produto_id, produto_nome, campo,
+        None if valor_anterior is None else str(valor_anterior),
+        None if valor_novo is None else str(valor_novo),
+        detalhe
+    ))
+
+
+def desconto_por_unidade(preco, valor, tipo):
+    """Converte o desconto informado em reais por unidade."""
+    return preco * (valor / 100) if tipo == 'percentual' else valor
+
+
+def validar_margem(nivel, nome, preco, custo, margem_minima, desc_unidade):
+    """Trava de margem. Devolve mensagem de erro ou None se estiver liberado.
+
+    - Ninguém pode deixar o preço final abaixo do custo.
+    - Gerência ainda precisa respeitar a margem mínima do produto.
+    """
+    # Trabalha em centavos arredondados: sem isso, 6.09 - 0.37 vira 5.719999...
+    # e um preço que bate exatamente no piso seria recusado por engano.
+    preco_final = round(preco - desc_unidade, 2)
+    custo = round(custo or 0, 2)
+
+    if preco_final < 0:
+        return f'{nome}: o desconto deixa o preço negativo.'
+
+    if custo <= 0:
+        if nivel != 'master':
+            return (f'{nome}: o preço de custo não está cadastrado. '
+                    f'Peça ao administrador Master para informá-lo antes de dar desconto.')
+        return None  # Master pode operar produto sem custo cadastrado
+
+    if preco_final < custo:
+        return (f'{nome}: o preço final R$ {preco_final:.2f} fica ABAIXO do custo '
+                f'R$ {custo:.2f}. Prejuízo por unidade de R$ {custo - preco_final:.2f}.')
+
+    if nivel != 'master':
+        piso = round(custo * (1 + (margem_minima or 0) / 100), 2)
+        if preco_final < piso:
+            return (f'{nome}: o preço final R$ {preco_final:.2f} fica abaixo do mínimo '
+                    f'permitido para o seu nível (R$ {piso:.2f} = custo + {margem_minima:.0f}%). '
+                    f'Fale com o administrador Master.')
+
+    return None
 
 
 # ==================== ROTAS DE AUTENTICAÇÃO ====================
@@ -837,8 +912,8 @@ def admin_criar_usuario():
             return jsonify({'erro': 'Usuário deve ter ao menos 3 caracteres'}), 400
         if len(senha) < 8:
             return jsonify({'erro': 'Senha deve ter ao menos 8 caracteres'}), 400
-        if nivel not in ('master', 'caixa'):
-            return jsonify({'erro': "Nível deve ser 'master' ou 'caixa'"}), 400
+        if nivel not in ('master', 'gerencia', 'caixa'):
+            return jsonify({'erro': "Nível deve ser 'master', 'gerencia' ou 'caixa'"}), 400
 
         conn = get_db()
         cursor = conn.cursor()
@@ -857,7 +932,10 @@ def admin_criar_usuario():
         conn.commit()
         conn.close()
 
-        rotulo = 'Master' if nivel == 'master' else 'Caixa (somente consulta)'
+        rotulos = {'master': 'Master (acesso total)',
+                   'gerencia': 'Gerência (altera preços respeitando a margem mínima)',
+                   'caixa': 'Caixa (somente consulta)'}
+        rotulo = rotulos[nivel]
         return jsonify({'mensagem': f'Usuário {usuario} criado como {rotulo}'}), 201
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
@@ -880,14 +958,14 @@ def admin_alterar_usuario(usuario_id):
             return jsonify({'erro': 'Usuário não encontrado'}), 404
 
         # Não deixar o Master remover a si mesmo e ficar sem acesso
-        if alvo['id'] == request.admin['id'] and (data.get('ativo') == 0 or data.get('nivel') == 'caixa'):
+        if alvo['id'] == request.admin['id'] and (data.get('ativo') == 0 or data.get('nivel') in ('caixa', 'gerencia')):
             conn.close()
             return jsonify({'erro': 'Você não pode remover o próprio acesso Master'}), 400
 
         if 'nivel' in data:
-            if data['nivel'] not in ('master', 'caixa'):
+            if data['nivel'] not in ('master', 'gerencia', 'caixa'):
                 conn.close()
-                return jsonify({'erro': "Nível deve ser 'master' ou 'caixa'"}), 400
+                return jsonify({'erro': "Nível deve ser 'master', 'gerencia' ou 'caixa'"}), 400
             cursor.execute('UPDATE admin SET nivel = ? WHERE id = ?', (data['nivel'], usuario_id))
 
         if 'ativo' in data:
@@ -919,7 +997,8 @@ def admin_listar_produtos():
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id, nome, tipo, preco_atual, unidade, icone, ativo,
+            SELECT id, nome, tipo, preco_atual, preco_custo, margem_minima,
+                   unidade, icone, ativo,
                    desconto_valor, desconto_tipo, limite_litros, data_atualizacao
             FROM produtos
             ORDER BY tipo, id
@@ -930,8 +1009,11 @@ def admin_listar_produtos():
         lista = []
         for p in produtos:
             preco = p['preco_atual'] or 0
+            custo = p['preco_custo'] or 0
+            margem_min = p['margem_minima'] if p['margem_minima'] is not None else 10
             desconto = p['desconto_valor'] or 0
-            por_unidade = preco * (desconto / 100) if p['desconto_tipo'] == 'percentual' else desconto
+            por_unidade = desconto_por_unidade(preco, desconto, p['desconto_tipo'])
+            preco_final = preco - por_unidade
 
             lista.append({
                 'id': p['id'],
@@ -940,22 +1022,28 @@ def admin_listar_produtos():
                 'icone': p['icone'],
                 'unidade': p['unidade'],
                 'ativo': p['ativo'],
+                'preco_custo': round(custo, 2),
+                'margem_minima': margem_min,
                 'preco_atual': round(preco, 2),
                 'desconto_valor': desconto,
                 'desconto_tipo': p['desconto_tipo'] or 'fixo',
                 'desconto_por_unidade': round(por_unidade, 2),
-                'preco_final': round(preco - por_unidade, 2),
+                'preco_final': round(preco_final, 2),
+                'margem_reais': round(preco_final - custo, 2) if custo else None,
+                'margem_percentual': round(((preco_final - custo) / custo) * 100, 1) if custo else None,
+                # piso que a Gerência precisa respeitar
+                'preco_minimo_gerencia': round(custo * (1 + margem_min / 100), 2) if custo else None,
                 'limite_litros': p['limite_litros'] or 0,
                 'data_atualizacao': p['data_atualizacao']
             })
 
-        return jsonify({'produtos': lista}), 200
+        return jsonify({'produtos': lista, 'meu_nivel': request.admin['nivel']}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
 
 @app.route('/api/admin/produtos/atualizar', methods=['POST'])
-@exige_master
+@exige_gerencia
 def admin_atualizar_produtos():
     """Atualiza preço, desconto e limite de um ou vários produtos de uma vez.
 
@@ -974,12 +1062,19 @@ def admin_atualizar_produtos():
         agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         atualizados = []
 
+        nivel = request.admin['nivel']
+        mudancas = []   # guarda o que mudou para gravar na auditoria depois do commit
+
         for p in produtos:
             produto_id = p.get('id')
             if not produto_id:
                 continue
 
-            cursor.execute('SELECT id, nome, preco_atual, desconto_valor, desconto_tipo, limite_litros, ativo FROM produtos WHERE id = ?', (produto_id,))
+            cursor.execute('''
+                SELECT id, nome, preco_atual, preco_custo, margem_minima,
+                       desconto_valor, desconto_tipo, limite_litros, ativo
+                FROM produtos WHERE id = ?
+            ''', (produto_id,))
             atual = cursor.fetchone()
             if not atual:
                 continue
@@ -995,7 +1090,23 @@ def admin_atualizar_produtos():
             limite = float(p.get('limite_litros', atual['limite_litros'] or 50))
             ativo = int(p.get('ativo', atual['ativo'] if atual['ativo'] is not None else 1))
 
-            if preco < 0 or desconto < 0 or limite < 0:
+            # custo e margem mínima: somente o Master altera
+            custo_atual = atual['preco_custo'] or 0
+            margem_atual = atual['margem_minima'] if atual['margem_minima'] is not None else 10
+
+            if nivel == 'master':
+                custo = float(p.get('preco_custo', custo_atual))
+                margem = float(p.get('margem_minima', margem_atual))
+            else:
+                custo, margem = custo_atual, margem_atual
+                if ('preco_custo' in p and float(p['preco_custo']) != custo_atual) or \
+                   ('margem_minima' in p and float(p['margem_minima']) != margem_atual):
+                    conn.close()
+                    return jsonify({
+                        'erro': 'Somente o administrador Master pode alterar preço de custo e margem mínima.'
+                    }), 403
+
+            if preco < 0 or desconto < 0 or limite < 0 or custo < 0 or margem < 0:
                 conn.close()
                 return jsonify({'erro': f'Valores negativos não são permitidos ({atual["nome"]})'}), 400
 
@@ -1003,33 +1114,138 @@ def admin_atualizar_produtos():
                 conn.close()
                 return jsonify({'erro': "Tipo de desconto deve ser 'fixo' ou 'percentual'"}), 400
 
-            por_unidade = preco * (desconto / 100) if tipo == 'percentual' else desconto
-            if por_unidade > preco:
+            if tipo == 'percentual' and desconto > 100:
                 conn.close()
-                return jsonify({'erro': f'O desconto de {atual["nome"]} é maior que o preço do produto'}), 400
+                return jsonify({'erro': f'{nome}: desconto percentual não pode passar de 100%'}), 400
+
+            por_unidade = desconto_por_unidade(preco, desconto, tipo)
+
+            # ===== TRAVA DE MARGEM =====
+            erro = validar_margem(nivel, nome, preco, custo, margem, por_unidade)
+            if erro:
+                registrar_auditoria(cursor, request.admin, 'BLOQUEIO', produto_id, nome,
+                                    'desconto', atual['desconto_valor'], desconto, erro)
+                conn.commit()
+                conn.close()
+                return jsonify({'erro': erro, 'bloqueado': True}), 400
+
+            # o que mudou de fato
+            for campo, antes, depois in [
+                ('nome', atual['nome'], nome),
+                ('preco_atual', atual['preco_atual'], preco),
+                ('preco_custo', custo_atual, custo),
+                ('margem_minima', margem_atual, margem),
+                ('desconto_valor', atual['desconto_valor'] or 0, desconto),
+                ('desconto_tipo', atual['desconto_tipo'] or 'fixo', tipo),
+                ('limite_litros', atual['limite_litros'] or 0, limite),
+                ('ativo', atual['ativo'], ativo),
+            ]:
+                if str(antes) != str(depois):
+                    mudancas.append((produto_id, nome, campo, antes, depois))
 
             cursor.execute('''
                 UPDATE produtos
-                SET nome = ?, preco_atual = ?, desconto_valor = ?, desconto_tipo = ?,
-                    limite_litros = ?, ativo = ?, data_atualizacao = ?
+                SET nome = ?, preco_atual = ?, preco_custo = ?, margem_minima = ?,
+                    desconto_valor = ?, desconto_tipo = ?, limite_litros = ?,
+                    ativo = ?, data_atualizacao = ?
                 WHERE id = ?
-            ''', (nome, preco, desconto, tipo, limite, ativo, agora, produto_id))
+            ''', (nome, preco, custo, margem, desconto, tipo, limite, ativo, agora, produto_id))
 
+            preco_final = preco - por_unidade
             atualizados.append({
                 'id': produto_id,
                 'nome': nome,
                 'preco_atual': round(preco, 2),
+                'preco_custo': round(custo, 2),
                 'desconto_por_unidade': round(por_unidade, 2),
-                'preco_final': round(preco - por_unidade, 2)
+                'preco_final': round(preco_final, 2),
+                'margem_reais': round(preco_final - custo, 2) if custo else None,
+                'margem_percentual': round(((preco_final - custo) / custo) * 100, 1) if custo else None
             })
+
+        for produto_id, nome, campo, antes, depois in mudancas:
+            registrar_auditoria(cursor, request.admin, 'ALTERACAO', produto_id, nome,
+                                campo, antes, depois)
 
         conn.commit()
         conn.close()
 
         return jsonify({
             'mensagem': f'{len(atualizados)} produto(s) atualizado(s)',
-            'produtos': atualizados
+            'produtos': atualizados,
+            'alteracoes_registradas': len(mudancas)
         }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==================== AUDITORIA ====================
+
+@app.route('/api/admin/auditoria', methods=['GET'])
+@exige_admin
+def admin_auditoria():
+    """Histórico de alterações de preço e desconto.
+
+    Parâmetros: data_inicio, data_fim, usuario, acao (ALTERACAO/BLOQUEIO), limite
+    """
+    try:
+        data_inicio = request.args.get('data_inicio')
+        data_fim = request.args.get('data_fim')
+        usuario = request.args.get('usuario')
+        acao = request.args.get('acao')
+        limite = min(int(request.args.get('limite', 200)), 1000)
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        query = 'SELECT * FROM auditoria WHERE 1=1'
+        params = []
+
+        if data_inicio:
+            query += ' AND data_hora >= ?'
+            params.append(f'{data_inicio} 00:00:00')
+
+        if data_fim:
+            query += ' AND data_hora <= ?'
+            params.append(f'{data_fim} 23:59:59')
+
+        if usuario:
+            query += ' AND admin_usuario = ?'
+            params.append(usuario)
+
+        if acao:
+            query += ' AND acao = ?'
+            params.append(acao)
+
+        query += ' ORDER BY id DESC'
+        cursor.execute(query, params)
+        registros = cursor.fetchall()[:limite]
+        conn.close()
+
+        rotulos = {
+            'nome': 'Nome',
+            'preco_atual': 'Preço de venda',
+            'preco_custo': 'Preço de custo',
+            'margem_minima': 'Margem mínima (%)',
+            'desconto_valor': 'Desconto',
+            'desconto_tipo': 'Tipo de desconto',
+            'limite_litros': 'Limite',
+            'ativo': 'Situação'
+        }
+
+        return jsonify({'registros': [{
+            'id': r['id'],
+            'data_hora': r['data_hora'],
+            'usuario': r['admin_usuario'],
+            'nivel': r['admin_nivel'],
+            'acao': r['acao'],
+            'produto': r['produto_nome'],
+            'campo': r['campo'],
+            'campo_rotulo': rotulos.get(r['campo'], r['campo']),
+            'valor_anterior': r['valor_anterior'],
+            'valor_novo': r['valor_novo'],
+            'detalhe': r['detalhe']
+        } for r in registros]}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
