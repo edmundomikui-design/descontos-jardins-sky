@@ -7,6 +7,7 @@ from io import BytesIO
 import base64
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+import os
 import re
 
 from database import init_db, get_db
@@ -16,10 +17,12 @@ CORS(app, resources={
     r"/api/*": {
         "origins": "*",
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
+        "allow_headers": ["Content-Type", "X-Admin-Token"]
     }
 })
-app.config['SECRET_KEY'] = 'sua-chave-secreta-aqui-mude-em-producao'
+
+# Em produção a chave vem de variável de ambiente
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or str(uuid.uuid4())
 
 # Inicializa banco de dados
 init_db()
@@ -1248,4 +1251,9 @@ def health():
     }), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Debug só na sua máquina. Em produção (Render) fica desligado,
+    # senão o Flask expõe um console que executa código no servidor.
+    em_producao = bool(os.environ.get('DATABASE_URL') or os.environ.get('RENDER'))
+    porta = int(os.environ.get('PORT', 5000))
+
+    app.run(debug=not em_producao, host='0.0.0.0', port=porta)
