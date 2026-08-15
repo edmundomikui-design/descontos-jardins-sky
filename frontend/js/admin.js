@@ -383,7 +383,8 @@ function renderizarProdutosAdmin() {
         <div class="produto-linha" data-id="${p.id}">
             <div class="produto-titulo">
                 <span class="icone">${p.icone || ''}</span>
-                <span>${p.nome}</span>
+                <input type="text" class="in-nome" value="${p.nome.replace(/"/g, '&quot;')}"
+                       title="Clique para renomear o produto">
             </div>
 
             <div class="campo">
@@ -401,10 +402,11 @@ function renderizarProdutosAdmin() {
                     <input type="number" step="0.01" min="0" class="in-desconto" value="${p.desconto_valor}"
                            oninput="recalcularLinha(${p.id})">
                     <select class="in-tipo" onchange="recalcularLinha(${p.id})">
-                        <option value="fixo" ${p.desconto_tipo === 'fixo' ? 'selected' : ''}>R$/${p.unidade}</option>
-                        <option value="percentual" ${p.desconto_tipo === 'percentual' ? 'selected' : ''}>%</option>
+                        <option value="fixo" ${p.desconto_tipo === 'fixo' ? 'selected' : ''}>R$ por ${p.unidade}</option>
+                        <option value="percentual" ${p.desconto_tipo === 'percentual' ? 'selected' : ''}>% do preço</option>
                     </select>
                 </div>
+                <small class="dica-desconto" id="dica-${p.id}"></small>
             </div>
 
             <div class="campo">
@@ -453,6 +455,13 @@ function recalcularLinha(id) {
     const el = document.getElementById(`final-${id}`);
     el.textContent = reais(final);
     el.classList.toggle('erro', final < 0);
+
+    const dica = document.getElementById(`dica-${id}`);
+    if (dica) {
+        dica.textContent = tipo === 'percentual' && desconto > 0
+            ? `= ${reais(porUnidade)} de desconto`
+            : '';
+    }
 }
 
 async function salvarProdutos() {
@@ -463,6 +472,7 @@ async function salvarProdutos() {
     try {
         const payload = [...document.querySelectorAll('.produto-linha')].map(linha => ({
             id: parseInt(linha.dataset.id),
+            nome: linha.querySelector('.in-nome').value.trim(),
             preco_atual: parseFloat(linha.querySelector('.in-preco').value) || 0,
             desconto_valor: parseFloat(linha.querySelector('.in-desconto').value) || 0,
             desconto_tipo: linha.querySelector('.in-tipo').value,

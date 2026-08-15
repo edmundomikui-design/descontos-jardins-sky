@@ -234,7 +234,7 @@ PRODUTOS_PADRAO = [
     (2, 'Gasolina Premium', 'combustivel', 6.49, 'L', '⛽'),
     (3, 'Etanol Comum', 'combustivel', 3.89, 'L', '🌱'),
     (4, 'Diesel S10', 'combustivel', 6.19, 'L', '🚛'),
-    (5, 'Diesel Premium', 'combustivel', 6.59, 'L', '🚛'),
+    (5, 'Gasolina Aditivada', 'combustivel', 6.59, 'L', '⛽'),
     (6, 'Óleo Sintético 5W30', 'oleo', 85.00, 'L', '🛢️'),
     (7, 'Óleo Semissintético 5W40', 'oleo', 55.00, 'L', '🛢️'),
     (8, 'Óleo Mineral 20W50', 'oleo', 35.00, 'L', '🛢️'),
@@ -303,6 +303,18 @@ def init_db():
                 (id, nome, tipo, preco_atual, unidade, icone)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', p)
+
+    # Renomeações de produto (mantém o histórico de abastecimentos ligado ao mesmo id)
+    renomear = [
+        (5, 'Diesel Premium', 'Gasolina Aditivada', '⛽'),
+    ]
+    for pid, nome_antigo, nome_novo, icone in renomear:
+        cursor.execute('SELECT nome FROM produtos WHERE id = ?', (pid,))
+        atual = cursor.fetchone()
+        if atual and atual['nome'] == nome_antigo:
+            cursor.execute('UPDATE produtos SET nome = ?, icone = ? WHERE id = ?',
+                           (nome_novo, icone, pid))
+            print(f"🔧 Produto {pid}: '{nome_antigo}' renomeado para '{nome_novo}'")
 
     for tabela, colunas in COLUNAS_NOVAS.items():
         existentes = _colunas_existentes(cursor, tabela, pg)

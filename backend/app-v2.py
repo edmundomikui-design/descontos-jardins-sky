@@ -984,6 +984,11 @@ def admin_atualizar_produtos():
             if not atual:
                 continue
 
+            nome = (p.get('nome') or atual['nome']).strip()
+            if len(nome) < 2:
+                conn.close()
+                return jsonify({'erro': 'O nome do produto não pode ficar vazio'}), 400
+
             preco = float(p.get('preco_atual', atual['preco_atual']))
             desconto = float(p.get('desconto_valor', atual['desconto_valor'] or 0))
             tipo = p.get('desconto_tipo', atual['desconto_tipo'] or 'fixo')
@@ -1005,14 +1010,14 @@ def admin_atualizar_produtos():
 
             cursor.execute('''
                 UPDATE produtos
-                SET preco_atual = ?, desconto_valor = ?, desconto_tipo = ?,
+                SET nome = ?, preco_atual = ?, desconto_valor = ?, desconto_tipo = ?,
                     limite_litros = ?, ativo = ?, data_atualizacao = ?
                 WHERE id = ?
-            ''', (preco, desconto, tipo, limite, ativo, agora, produto_id))
+            ''', (nome, preco, desconto, tipo, limite, ativo, agora, produto_id))
 
             atualizados.append({
                 'id': produto_id,
-                'nome': atual['nome'],
+                'nome': nome,
                 'preco_atual': round(preco, 2),
                 'desconto_por_unidade': round(por_unidade, 2),
                 'preco_final': round(preco - por_unidade, 2)

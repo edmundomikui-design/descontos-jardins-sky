@@ -257,3 +257,14 @@ body {
     .cartao .valor { font-size: 15px; }
     @page { margin: 14mm; size: landscape; }
 }
+
+/* nome do produto editável */
+.produto-titulo .in-nome {
+    font-weight: 600; font-size: 15px; color: #1f2430;
+    border: 1px solid transparent; background: transparent;
+    padding: 5px 8px; border-radius: 6px; width: 100%;
+}
+.produto-titulo .in-nome:hover { border-color: #e5e7eb; background: #fafbfc; }
+.produto-titulo .in-nome:focus { outline: none; border-color: #3949ab; background: #fff; }
+
+.dica-desconto { display: block; margin-top: 4px; font-size: 12px; color: #2e7d32; }
