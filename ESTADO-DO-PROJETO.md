@@ -111,6 +111,49 @@ cupom — erro de digitação na pista não vira valor cobrado errado.
 Cada abastecimento deixa rastro na auditoria: quem liberou, em que posto,
 quantos litros e quanto foi cobrado.
 
+### Quem tem direito ao desconto (trava contra fraude)
+
+O desconto é para taxista e motorista de aplicativo. Sem nada que ligue a pessoa
+à categoria, qualquer um se declara motorista. São **três travas diferentes**,
+porque cada fraude é de um tipo:
+
+**1. Comprovante no cadastro** — muda conforme a ocupação:
+
+| Ocupação | O que pede | Por quê |
+|---|---|---|
+| Táxi | Foto da **licença de taxista** (alvará/CONDUTAX) | Documento físico, fácil de fotografar |
+| Motorista de aplicativo | **Print da tela de perfil** no app de motorista | Precisa aparecer o nome dele |
+| Outro (convênio) | Comprovante de vínculo + nome da empresa | Quem confere de fato é o RH da empresa |
+
+O número do CONDUTAX/CONDUAPP é pedido, mas **opcional** — a prova é a imagem.
+A foto é reduzida no próprio celular (1000 px, qualidade 0,7 ≈ 100 KB) antes de
+subir, e guardada no banco.
+
+**2. Placa conferida na bomba** — é a trava que realmente funciona, porque não
+depende de sistema nenhum: ou bate com o carro na frente do frentista, ou não bate.
+A placa aparece grande no cartão do cupom, junto com a categoria.
+
+A placa é **editável pelo motorista**, e isso é proposital: motorista de aplicativo
+troca de carro (alugado, da frota, o do fim de semana). Se fosse fixa no cadastro,
+a conferência falharia justamente para quem mais usa o app. No táxi ela é estável,
+porque acompanha a permissão quando o taxista troca de veículo. Toda troca fica
+registrada na auditoria.
+
+Placa repetida **não bloqueia** o cadastro — táxi dividido por turno é legítimo —
+mas o frentista recebe um alerta amarelo na tela dizendo em quantos cadastros
+aquela placa aparece.
+
+**3. Aba "Padrões Suspeitos" no painel** (nível Gerência) — é o que a foto não pega:
+a fraude de dentro, do frentista que cadastra amigos. Mostra placas repetidas,
+motorista que só abastece com um mesmo frentista (5+ vezes), cadastros criados em
+rajada, trocas de placa e quem mais recebeu desconto. Dá para abrir o comprovante
+de qualquer cliente ali mesmo.
+
+**Sobre o que isso é e o que não é:** nenhuma dessas travas é prova inviolável, e
+o app não finge que é. Um print pode ser emprestado. O que elas fazem é criar
+atrito e deixar rastro com nome em cima — suficiente para desencorajar quem ia
+burlar por conveniência, que é a maioria.
+
 ### Painel administrativo
 Três níveis de acesso:
 
@@ -118,7 +161,10 @@ Três níveis de acesso:
 |---|---|
 | **Master** | Tudo: custo, margem mínima, preços, descontos, usuários. **Não consegue vender abaixo do custo.** |
 | **Gerência** | Altera preços e descontos até o limite da margem mínima. Não vê nem altera o custo. |
-| **Caixa** | Somente consulta: fechamento e relatórios. |
+| **Caixa** | Somente consulta: fechamento e relatórios. Também usa a tela da pista. |
+
+A aba **Padrões Suspeitos** e os comprovantes dos clientes são visíveis a partir
+do nível Gerência — o Caixa não vê documento de cliente.
 
 - **Preços e descontos por produto** — custo, preço de bomba, desconto (R$/L ou %),
   limite de litros, margem mínima. Nome do produto editável.
@@ -183,8 +229,13 @@ Anotado para não repetir:
 - `backend/teste_frentista.py` roda o fluxo da pista ponta a ponta num SQLite
   descartável: `python teste_frentista.py` dentro de `backend/`. Não encosta
   no banco de produção.
+- `backend/teste_comprovacao.py` cobre placa, comprovante por categoria, troca de
+  placa e os padrões suspeitos. Também num SQLite descartável.
 - `frontend/teste_instalar.js` testa a faixa de instalação nos dois sistemas:
   `npm install jsdom` e depois `node teste_instalar.js`.
+- Cadastros feitos **antes** desta exigência ficam sem placa e sem comprovante.
+  A tela do painel avisa quando não há comprovante em vez de dar erro. Se quiser
+  exigir de todo mundo, é preciso uma tela pedindo o complemento no próximo login.
 - O service worker **precisa ficar na raiz** (`/sw.js`). Em `/js/` ele só
   controlava aquela pasta e o Chrome não oferecia a instalação. O `instalar.js`
   ainda desfaz o registro antigo em `/js/` nos celulares que já o tinham.

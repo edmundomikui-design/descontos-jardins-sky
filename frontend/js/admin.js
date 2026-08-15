@@ -163,6 +163,7 @@ function trocarAba(nome) {
     if (nome === 'auditoria') carregarAuditoria();
     if (nome === 'usuarios') carregarUsuarios();
     if (nome === 'caixa') carregarCaixa();
+    if (nome === 'suspeitas') carregarSuspeitas();
 }
 
 // ===================== FECHAMENTO DE CAIXA =====================
@@ -721,4 +722,229 @@ async function trocarSenha(evento) {
     }
 
     return false;
+}
+
+// ===================== PADRÕES SUSPEITOS =====================
+//
+// A foto do comprovante trava quem se declara motorista sem ser. O que ela
+// não pega é a fraude de dentro: frentista que cadastra amigos e libera
+// desconto para eles. Isso nunca aparece num abastecimento isolado — só no
+// padrão ao longo dos dias. Daí esta tela.
+//
+// Tudo aqui é indício, não prova. O texto foi escrito para lembrar disso,
+// porque acusar um funcionário por engano custa mais caro que o desconto.
+
+function escapar(texto) {
+    const d = document.createElement('div');
+    d.textContent = texto == null ? '' : String(texto);
+    return d.innerHTML;
+}
+
+function placaBonita(p) {
+    return (!p || p.length !== 7) ? (p || '—') : `${p.slice(0, 3)} ${p.slice(3)}`;
+}
+
+async function carregarSuspeitas() {
+    const dias = document.getElementById('suspeitas-dias').value;
+    const alvo = document.getElementById('suspeitas-conteudo');
+    const resumo = document.getElementById('suspeitas-resumo');
+
+    alvo.innerHTML = '<p class="carregando">Analisando...</p>';
+    resumo.innerHTML = '';
+
+    try {
+        const d = await api(`/admin/suspeitas?dias=${dias}`);
+
+        resumo.className = 'resumo-suspeitas ' + (d.total_alertas ? 'com-alerta' : 'limpo');
+        resumo.innerHTML = d.total_alertas
+            ? `<strong>${d.total_alertas} ponto(s)</strong> merecem uma olhada nos últimos ${d.periodo_dias} dias.`
+            : `Nenhum padrão fora do comum nos últimos ${d.periodo_dias} dias.`;
+
+        alvo.innerHTML =
+            blocoPlacasRepetidas(d.placas_repetidas) +
+            blocoMesmoFrentista(d.sempre_mesmo_frentista) +
+            blocoRajada(d.cadastros_em_rajada) +
+            blocoTrocasPlaca(d.trocas_de_placa) +
+            blocoBeneficiados(d.maiores_beneficiados);
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro visivel">${escapar(e.message)}</p>`;
+    }
+}
+
+function caixaSuspeita(titulo, explicacao, corpo, vazio) {
+    if (!corpo) {
+        return `<div class="caixa-suspeita vazia">
+            <h3>${titulo}</h3><p class="ajuda">${vazio}</p></div>`;
+    }
+    return `<div class="caixa-suspeita">
+        <h3>${titulo}</h3>
+        <p class="ajuda">${explicacao}</p>
+        ${corpo}
+    </div>`;
+}
+
+function blocoPlacasRepetidas(lista) {
+    const corpo = (lista || []).map(p => `
+        <div class="item-suspeita">
+            <div class="placa-item">${placaBonita(p.placa)}</div>
+            <div class="detalhe-item">
+                <strong>${p.quantidade} cadastros</strong> usam esta placa
+                <ul>${p.clientes.map(c => `
+                    <li>
+                        ${escapar(c.nome)} — ${escapar(c.ocupacao || '')}
+                        <span class="cinza">(cadastrado em ${escapar(c.cadastrado_em)})</span>
+                        <button class="link-comprovante" onclick="verComprovante(${c.id})">ver comprovante</button>
+                    </li>`).join('')}
+                </ul>
+            </div>
+        </div>`).join('');
+
+    return caixaSuspeita(
+        '🚗 Mesma placa em vários cadastros',
+        'Táxi dividido por turno é normal e aparece aqui também. O que chama atenção ' +
+        'é a mesma placa em três ou mais contas, ou em contas criadas no mesmo dia.',
+        corpo,
+        'Nenhuma placa repetida.'
+    );
+}
+
+function blocoMesmoFrentista(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr>
+                <th>Motorista</th><th>Placa</th><th>Abastecimentos</th><th>Sempre com</th>
+            </tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.cliente_nome)}</td>
+                    <td class="mono">${placaBonita(l.placa)}</td>
+                    <td>${l.abastecimentos}</td>
+                    <td><strong>${escapar(l.frentista)}</strong></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '👥 Motorista que só abastece com um frentista',
+        'Quem abastece de verdade cai em turnos diferentes ao longo do mês. ' +
+        'Cinco ou mais abastecimentos sempre com a mesma pessoa é o padrão de um combinado — ' +
+        'mas também pode ser só rotina de horário. Vale conversar antes de concluir.',
+        corpo,
+        'Ninguém abastecendo sempre com o mesmo frentista.'
+    );
+}
+
+function blocoRajada(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr><th>Dia</th><th>Cadastros criados</th></tr></thead>
+            <tbody>${lista.map(l => `
+                <tr><td>${escapar(l.dia)}</td><td>${l.quantidade}</td></tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '📋 Cadastros em rajada',
+        'Vários cadastros no mesmo dia pode ser divulgação que deu certo — ou um mutirão ' +
+        'de amigos. Cruze com o dia em que você fez alguma ação de divulgação.',
+        corpo,
+        'Nenhum dia com volume fora do normal.'
+    );
+}
+
+function blocoTrocasPlaca(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr><th>Quando</th><th>Cliente</th><th>De</th><th>Para</th></tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.quando)}</td>
+                    <td>${escapar(l.cliente)}</td>
+                    <td class="mono">${placaBonita(l.de)}</td>
+                    <td class="mono">${placaBonita(l.para)}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '🔁 Trocas de placa',
+        'Motorista de aplicativo troca de carro e é esperado que troque a placa. ' +
+        'O que destoa é trocar toda semana, ou trocar minutos antes de abastecer.',
+        corpo,
+        'Nenhuma troca de placa no período.'
+    );
+}
+
+function blocoBeneficiados(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr>
+                <th>Motorista</th><th>Placa</th><th>Categoria</th>
+                <th>Dias</th><th>Litros</th><th>Desconto total</th>
+            </tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.cliente_nome)}
+                        <button class="link-comprovante" onclick="verComprovante(${l.cliente_id})">comprovante</button>
+                    </td>
+                    <td class="mono">${placaBonita(l.placa)}</td>
+                    <td>${escapar(l.ocupacao || '')}</td>
+                    <td>${l.dias_com_abastecimento}</td>
+                    <td>${l.litros.toFixed(2).replace('.', ',')}</td>
+                    <td><strong>R$ ${l.desconto_total.toFixed(2).replace('.', ',')}</strong></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '💰 Quem mais recebeu desconto',
+        'Não é alerta — é o custo do programa por pessoa. Taxista que roda todo dia ' +
+        'aparece no topo com razão. Estranho é quem aparece no topo com poucos dias rodados.',
+        corpo,
+        'Sem abastecimentos no período.'
+    );
+}
+
+// ===================== COMPROVANTE DO CADASTRO =====================
+
+async function verComprovante(clienteId) {
+    const janela = document.getElementById('janela-comprovante');
+    const alvo = document.getElementById('comprovante-conteudo');
+
+    alvo.innerHTML = '<p class="carregando">Carregando...</p>';
+    janela.hidden = false;
+
+    try {
+        const d = await api(`/admin/cliente/${clienteId}/comprovante`);
+
+        const rotulos = {
+            licenca_taxi: 'Licença de taxista',
+            perfil_app: 'Perfil no aplicativo de motorista',
+            convenio: 'Comprovante de vínculo com a empresa'
+        };
+
+        alvo.innerHTML = `
+            <h3>${escapar(d.nome)}</h3>
+            <p class="ajuda">
+                ${escapar(d.ocupacao || '')} ·
+                placa <span class="mono">${placaBonita(d.placa)}</span>
+                ${d.empresa_convenio ? ' · ' + escapar(d.empresa_convenio) : ''}
+                ${d.registro_numero ? ' · registro ' + escapar(d.registro_numero) : ''}
+            </p>
+            <p class="tipo-comprovante">
+                ${escapar(rotulos[d.tipo_comprovante] || 'Comprovante')}
+                ${d.enviado_em ? '<span class="cinza"> — enviado em ' + escapar(String(d.enviado_em).slice(0, 10)) + '</span>' : ''}
+            </p>
+            ${d.imagem
+                ? `<img src="${d.imagem}" alt="Comprovante" class="imagem-comprovante">`
+                : '<p class="msg-erro visivel">Este cadastro não tem comprovante — foi feito antes desta exigência.</p>'}`;
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro visivel">${escapar(e.message)}</p>`;
+    }
+}
+
+function fecharComprovante(evento) {
+    if (evento && evento.target !== evento.currentTarget) return;
+    document.getElementById('janela-comprovante').hidden = true;
+    document.getElementById('comprovante-conteudo').innerHTML = '';
 }

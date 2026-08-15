@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="CAJ SKY">
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body class="dashboard-page">
     <div class="navbar">
@@ -26,6 +26,27 @@
         <div class="welcome-card">
             <h2>Bem-vindo, <span id="cliente-nome">Usuário</span>! 👋</h2>
             <p>Gere seu QR code diário para economizar em cada abastecimento</p>
+        </div>
+
+        <!-- CARRO EM USO -->
+        <div class="cartao-placa">
+            <p class="titulo-placa">Carro que você está usando</p>
+            <p class="valor-placa" id="placa-atual">—</p>
+            <p class="aviso-placa">
+                O frentista confere esta placa com o carro na bomba.
+                Trocou de carro? Atualize antes de abastecer.
+            </p>
+            <button type="button" class="btn-trocar-placa" onclick="abrirTrocaPlaca()">
+                Trocar a placa
+            </button>
+
+            <div class="linha-troca" id="linha-troca-placa" hidden>
+                <input type="text" id="placa-atual-campo" maxlength="8" placeholder="ABC1D23"
+                       autocapitalize="characters" autocomplete="off" spellcheck="false"
+                       oninput="formatarCampoPlaca(this)">
+                <button type="button" onclick="salvarPlaca()">Salvar</button>
+            </div>
+            <p class="msg-placa" id="msg-placa"></p>
         </div>
 
         <!-- PRODUTOS DISPONÍVEIS (NOVO) -->
@@ -174,6 +195,7 @@
         };
     </script>
     <script src="js/instalar.js?v=1"></script>
-    <script src="js/app-v2.js?v=10"></script>
+    <script src="js/comprovacao.js?v=1"></script>
+    <script src="js/app-v2.js?v=11"></script>
 </body>
 </html>

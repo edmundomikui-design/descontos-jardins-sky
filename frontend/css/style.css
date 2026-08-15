@@ -389,11 +389,21 @@ html, body {
     border-radius: 8px;
 }
 
+/* É a saída quando a câmera do frentista não lê: tela riscada, sol forte,
+   lente suja. Em cinza claro de 12px ninguém consegue ditar o código. */
 .qrcode-text {
-    margin-top: 10px;
-    font-size: 12px;
-    color: #999;
+    margin-top: 12px;
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #1a237e;
+    background: #eef4fd;
+    border: 1px solid #c7dcf7;
+    border-radius: 8px;
+    padding: 8px 10px;
     word-break: break-all;
+    user-select: all;
 }
 
 .cupom-info {
@@ -651,3 +661,144 @@ html, body {
     font-size: 12px;
     color: #777;
 }
+
+/* ===== COMPROVAÇÃO DA CATEGORIA NO CADASTRO ===== */
+
+.bloco-veiculo {
+    background: #eef4fd;
+    border: 1px solid #c7dcf7;
+    border-radius: 10px;
+    padding: 16px;
+    margin: 18px 0;
+}
+
+.bloco-veiculo legend {
+    font-weight: 700;
+    font-size: 15px;
+    color: #1a237e;
+    padding: 0 8px;
+}
+
+.ajuda-bloco {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #445;
+    margin-bottom: 14px;
+}
+
+.bloco-veiculo .ajuda {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #667;
+}
+
+/* Placa em letra de máquina: fica parecida com a do carro e evita confundir
+   o zero com a letra O na hora de conferir. */
+#cadastro-placa, #placa-atual-campo {
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+/* O input de arquivo do navegador é feio e pequeno demais para o dedo;
+   escondemos e usamos o label como botão. */
+.entrada-foto {
+    position: absolute;
+    width: 1px; height: 1px;
+    opacity: 0; overflow: hidden;
+}
+
+.botao-foto {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    background: #fff;
+    border: 2px dashed #7aa7dd;
+    border-radius: 10px;
+    color: #1a4a8a;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+}
+.botao-foto:hover { background: #f4f9ff; }
+.botao-foto.foto-ok {
+    border-style: solid;
+    border-color: #16a34a;
+    background: #f0fdf4;
+    color: #15803d;
+}
+
+.previa-foto { margin-top: 12px; text-align: center; }
+.previa-foto img {
+    max-width: 100%;
+    max-height: 200px;
+    border-radius: 8px;
+    border: 1px solid #c7dcf7;
+}
+.trocar-foto {
+    display: block;
+    margin: 8px auto 0;
+    background: none;
+    border: none;
+    color: #1a4a8a;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+/* ===== PLACA NO PAINEL DO MOTORISTA ===== */
+
+.cartao-placa {
+    background: #eef4fd;
+    border: 1px solid #c7dcf7;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+.cartao-placa .titulo-placa {
+    font-size: 13px;
+    font-weight: 600;
+    color: #445;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.cartao-placa .valor-placa {
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: #1a237e;
+    margin: 4px 0;
+}
+.cartao-placa .aviso-placa { font-size: 12.5px; color: #667; line-height: 1.45; }
+.cartao-placa .btn-trocar-placa {
+    background: none;
+    border: none;
+    color: #1a4a8a;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 6px 0 0;
+}
+.cartao-placa .linha-troca { display: flex; gap: 8px; margin-top: 8px; }
+.cartao-placa .linha-troca input { flex: 1; }
+.cartao-placa .linha-troca button {
+    padding: 10px 16px;
+    background: #2196F3;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.msg-placa { font-size: 13px; margin-top: 8px; }
+.msg-placa.ok { color: #15803d; }
+.msg-placa.erro { color: #b91c1c; }

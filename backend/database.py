@@ -152,6 +152,14 @@ def _schema(pg):
             data_consentimento TEXT,
             aceita_parceiros INTEGER DEFAULT 0,
             data_consentimento_parceiros TEXT,
+            placa TEXT,
+            data_placa TEXT,
+            registro_tipo TEXT,
+            registro_numero TEXT,
+            empresa_convenio TEXT,
+            foto_comprovante TEXT,
+            foto_comprovante_tipo TEXT,
+            data_foto_comprovante TEXT,
             data_criacao TIMESTAMP DEFAULT {agora},
             data_atualizacao TIMESTAMP DEFAULT {agora}
         )''',
@@ -223,6 +231,7 @@ def _schema(pg):
             valor_original {real} NOT NULL,
             valor_desconto {real} NOT NULL,
             valor_final {real} NOT NULL,
+            registrado_por TEXT,
             timestamp TIMESTAMP DEFAULT {agora}
         )''',
 
@@ -270,6 +279,23 @@ COLUNAS_NOVAS = {
         ('data_consentimento', 'TEXT', 'TEXT'),
         ('aceita_parceiros', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
         ('data_consentimento_parceiros', 'TEXT', 'TEXT'),
+        # Identificação — trava contra quem se diz taxista/motorista de app só
+        # para pegar desconto.
+        #
+        # A placa é editável de propósito: motorista de aplicativo troca de
+        # carro (aluguel, carro da frota), então ela vale para "hoje" e é
+        # conferida pelo frentista na bomba. No táxi ela é estável, porque
+        # acompanha a permissão quando o taxista troca de veículo.
+        ('placa', 'TEXT', 'TEXT'),
+        ('data_placa', 'TEXT', 'TEXT'),
+        ('registro_tipo', 'TEXT', 'TEXT'),           # condutax | conduapp | convenio
+        ('registro_numero', 'TEXT', 'TEXT'),         # opcional: a prova é a foto
+        ('empresa_convenio', 'TEXT', 'TEXT'),
+        # Comprovante da categoria, em base64 e já reduzido no celular:
+        # licença de taxista, print do perfil no app de motorista ou convênio.
+        ('foto_comprovante', 'TEXT', 'TEXT'),
+        ('foto_comprovante_tipo', 'TEXT', 'TEXT'),
+        ('data_foto_comprovante', 'TEXT', 'TEXT'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
@@ -288,6 +314,12 @@ COLUNAS_NOVAS = {
         ('limite_litros', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
         ('preco_custo', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('margem_minima', 'DOUBLE PRECISION DEFAULT 10', 'REAL DEFAULT 10'),
+    ],
+    'abastecimentos': [
+        # Quem liberou o abastecimento na pista. Sem isso, descobrir se um
+        # motorista só abastece com um frentista específico dependeria de
+        # cruzar a auditoria por data — frágil e sujeito a erro.
+        ('registrado_por', 'TEXT', 'TEXT'),
     ],
     'admin': [
         ('token', 'TEXT', 'TEXT'),

@@ -59,12 +59,15 @@ with app.test_client() as c:
     conn.commit()
     conn.close()
 
-    # cliente
+    # cliente — placa e comprovante da categoria são obrigatórios desde a
+    # exigência de identificação (ver teste_comprovacao.py)
     r = c.post('/api/auth/cadastro', json={
-        'cpf': '111.444.777-35', 'nome': 'Motorista Teste', 'ocupacao': 'motorista_app',
-        'tel': '11999998888', 'endereco': 'Rua Estados Unidos, 1930',
+        'cpf': '111.444.777-35', 'nome': 'Motorista Teste', 'ocupacao': 'Uber',
+        'tel': '11999998888', 'endereco': 'Rua Estados Unidos, 1930, Jardins',
         'email': f'teste_pista_{datetime.now().timestamp()}@teste.com',
-        'senha': 'senha12345', 'aceita_promocoes': True
+        'senha': 'senha12345', 'aceita_promocoes': True,
+        'placa': 'ABC1D23',
+        'foto_comprovante': 'data:image/jpeg;base64,' + ('QUJD' * 800)
     })
     cliente_id = json_de(r).get('cliente_id') or json_de(r).get('id')
     checar('cliente de teste cadastrado', r.status_code in (200, 201), json_de(r))

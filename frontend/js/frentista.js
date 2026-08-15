@@ -16,6 +16,9 @@ const el = id => document.getElementById(id);
 const reais = v => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
 const litros = v => (Number(v) || 0).toFixed(2).replace('.', ',') + ' L';
 
+// ABC1D23 -> ABC 1D23, que é como a placa aparece no carro
+const formatarPlaca = p => (!p || p.length !== 7) ? (p || '—') : p.slice(0, 3) + ' ' + p.slice(3);
+
 function mostrarTela(id) {
     ['tela-login', 'tela-leitura', 'tela-cupom', 'tela-ok']
         .forEach(t => el(t).hidden = (t !== id));
@@ -205,6 +208,20 @@ function exibirCupom(c) {
     el('cupom-hora').textContent =
         String(agora.getHours()).padStart(2, '0') + ':' +
         String(agora.getMinutes()).padStart(2, '0');
+
+    // A placa é a única conferência que não depende de sistema nenhum:
+    // ou bate com o carro na bomba, ou não bate.
+    el('cupom-placa').textContent = formatarPlaca(c.placa);
+    el('cupom-ocupacao').textContent = c.ocupacao || '';
+
+    const alerta = el('alerta-placa');
+    if (c.placa_em_varios_cadastros) {
+        alerta.textContent = '⚠ Esta placa está em ' + c.placa_qtd_cadastros +
+            ' cadastros. Pode ser táxi dividido por turno — confira o rosto do motorista.';
+        alerta.hidden = false;
+    } else {
+        alerta.hidden = true;
+    }
 
     el('cupom-cliente').textContent = c.cliente_nome || '—';
     el('cupom-cpf').textContent = 'CPF ' + (c.cliente_cpf || '—');

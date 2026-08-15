@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.location.pathname.includes('dashboard')) {
         verificarAutenticacao();
+        mostrarPlacaAtual();
         carregarProdutos().then(carregarCuponsAtivos);
     } else {
         setupLoginForm();
@@ -28,6 +29,62 @@ document.addEventListener('DOMContentLoaded', () => {
     const agora = new Date().toLocaleDateString('pt-BR');
     document.querySelectorAll('[id*="cupom-data"]').forEach(el => el.textContent = agora);
 });
+
+// ===== CARRO EM USO =====
+// Motorista de aplicativo troca de carro toda hora. Se a placa fosse fixa no
+// cadastro, a conferência do frentista falharia justamente para quem mais usa
+// o app — e ele levaria a culpa por uma regra nossa.
+
+function mostrarPlacaAtual() {
+    const placa = localStorage.getItem('cliente_placa') || '';
+    const campo = document.getElementById('placa-atual');
+    if (campo) campo.textContent = placa ? placa.slice(0, 3) + ' ' + placa.slice(3) : '—';
+}
+
+function abrirTrocaPlaca() {
+    const linha = document.getElementById('linha-troca-placa');
+    linha.hidden = !linha.hidden;
+    if (!linha.hidden) {
+        document.getElementById('placa-atual-campo').value =
+            localStorage.getItem('cliente_placa') || '';
+        document.getElementById('placa-atual-campo').focus();
+    }
+}
+
+async function salvarPlaca() {
+    const campo = document.getElementById('placa-atual-campo');
+    const msg = document.getElementById('msg-placa');
+    const placa = campo.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+    if (!placaValida(placa)) {
+        msg.textContent = 'Placa inválida. Use ABC1D23 ou ABC1234.';
+        msg.className = 'msg-placa erro';
+        return;
+    }
+
+    try {
+        const resposta = await fetch(`${API_BASE_URL}/cliente/placa`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                cliente_id: localStorage.getItem('cliente_id'),
+                placa: placa
+            })
+        });
+        const dados = await resposta.json();
+
+        if (!resposta.ok) throw new Error(dados.erro || 'Não consegui salvar.');
+
+        localStorage.setItem('cliente_placa', dados.placa);
+        mostrarPlacaAtual();
+        document.getElementById('linha-troca-placa').hidden = true;
+        msg.textContent = '✓ Placa atualizada. É esta que o frentista vai conferir.';
+        msg.className = 'msg-placa ok';
+    } catch (e) {
+        msg.textContent = e.message;
+        msg.className = 'msg-placa erro';
+    }
+}
 
 // ===== AUTENTICAÇÃO =====
 function toggleTab() {
@@ -68,7 +125,11 @@ function setupLoginForm() {
                 senha: document.getElementById('cadastro-senha').value,
                 confirmacao: document.getElementById('cadastro-confirmacao').value,
                 aceita_promocoes: document.getElementById('cadastro-promocoes').checked,
-                aceita_parceiros: document.getElementById('cadastro-parceiros').checked
+                aceita_parceiros: document.getElementById('cadastro-parceiros').checked,
+                placa: document.getElementById('cadastro-placa').value,
+                registro_numero: document.getElementById('cadastro-registro').value,
+                empresa_convenio: document.getElementById('cadastro-empresa').value,
+                foto_comprovante: comprovanteEmBase64
             };
             await fazerCadastro(dados);
         });
@@ -89,6 +150,8 @@ async function fazerLogin(email, senha) {
             localStorage.setItem('cliente_id', data.cliente_id);
             localStorage.setItem('cliente_nome', data.nome);
             localStorage.setItem('cliente_email', data.email);
+            localStorage.setItem('cliente_placa', data.placa || '');
+            localStorage.setItem('cliente_ocupacao', data.ocupacao || '');
             window.location.href = 'dashboard.html';
         } else {
             mostrarErro('login', data.erro || 'Erro ao fazer login');
@@ -104,6 +167,13 @@ async function fazerCadastro(dados) {
 
     if (dados.senha !== dados.confirmacao) {
         mostrarErro('cadastro', 'As senhas não correspondem');
+        return;
+    }
+
+    // Placa e comprovante da categoria (js/comprovacao.js)
+    const problema = validarComprovacao(dados);
+    if (problema) {
+        mostrarErro('cadastro', problema);
         return;
     }
 
@@ -124,6 +194,8 @@ async function fazerCadastro(dados) {
         if (response.ok) {
             mostrarErro('cadastro', '✅ Cadastro realizado com sucesso! Faça login.', 'sucesso');
             document.getElementById('cadastro-form').reset();
+            limparComprovante();
+            document.getElementById('bloco-veiculo').style.display = 'none';
             setTimeout(() => {
                 toggleTab();
             }, 1500);
@@ -475,7 +547,9 @@ function mostrarCupomGerado(data) {
     // QR code
     const img = document.getElementById('qrcode-img');
     if (img) img.src = data.qrcode_image;
-    setTxt('qrcode-text', `Código: ${data.qrcode_data}`);
+    // Sem "Código:" na frente: o frentista digita o que está escrito, e o
+    // rótulo colado no código já causou confusão em telas pequenas.
+    setTxt('qrcode-text', data.qrcode_data);
 
     // Informações do produto
     setTxt('produto-nome', data.produto_nome);

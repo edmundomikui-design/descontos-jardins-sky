@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="CAJ SKY">
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body class="auth-page">
     <div class="container">
@@ -54,13 +54,60 @@
 
                     <div class="form-group">
                         <label for="cadastro-ocupacao">Ocupação:</label>
-                        <select id="cadastro-ocupacao" name="ocupacao" required>
+                        <select id="cadastro-ocupacao" name="ocupacao" required
+                                onchange="ajustarCamposOcupacao()">
                             <option value="">Selecione...</option>
                             <option value="Táxi">Táxi</option>
-                            <option value="Uber">Uber</option>
-                            <option value="Outro">Outro</option>
+                            <option value="Uber">Motorista de aplicativo (Uber, 99…)</option>
+                            <option value="Outro">Outro — convênio com empresa</option>
                         </select>
                     </div>
+
+                    <!-- ===== COMPROVAÇÃO DA CATEGORIA ===== -->
+                    <fieldset class="bloco-veiculo" id="bloco-veiculo" style="display:none;">
+                        <legend id="legenda-veiculo">Comprovação</legend>
+                        <p class="ajuda-bloco" id="ajuda-bloco-veiculo"></p>
+
+                        <div class="form-group">
+                            <label for="cadastro-placa">Placa do carro que você está usando:</label>
+                            <input type="text" id="cadastro-placa" name="placa"
+                                   placeholder="ABC1D23" maxlength="8"
+                                   autocapitalize="characters" autocomplete="off"
+                                   spellcheck="false" oninput="formatarCampoPlaca(this)">
+                            <small class="ajuda" id="ajuda-placa"></small>
+                        </div>
+
+                        <div class="form-group" id="grupo-registro">
+                            <label for="cadastro-registro"><span id="rotulo-registro">Registro</span>:</label>
+                            <input type="text" id="cadastro-registro" name="registro_numero"
+                                   autocomplete="off" spellcheck="false">
+                            <small class="ajuda" id="ajuda-registro"></small>
+                        </div>
+
+                        <div class="form-group" id="grupo-convenio" style="display:none;">
+                            <label for="cadastro-empresa">Empresa do convênio:</label>
+                            <input type="text" id="cadastro-empresa" name="empresa_convenio"
+                                   placeholder="Nome da empresa onde você trabalha"
+                                   autocomplete="organization">
+                            <small class="ajuda">Só vale para empresas com convênio ativo com os postos CAJ e SKY.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label id="rotulo-foto">Comprovante:</label>
+                            <input type="file" id="cadastro-foto" accept="image/*"
+                                   class="entrada-foto" onchange="prepararComprovante(this)">
+                            <label for="cadastro-foto" class="botao-foto" id="botao-foto">
+                                📷 Enviar comprovante
+                            </label>
+                            <small class="ajuda" id="ajuda-foto"></small>
+                            <div id="previa-foto" class="previa-foto" hidden>
+                                <img id="previa-foto-img" alt="Comprovante enviado">
+                                <button type="button" class="trocar-foto" onclick="limparComprovante()">
+                                    Trocar imagem
+                                </button>
+                            </div>
+                        </div>
+                    </fieldset>
 
                     <div class="form-group">
                         <label for="cadastro-tel">Telefone:</label>
@@ -92,7 +139,11 @@
                             <input type="checkbox" id="cadastro-promocoes" name="aceita_promocoes" required>
                             <span><strong>Aceito receber os avisos do aplicativo</strong> — cupons do dia,
                             mudanças de preço e ofertas por tempo limitado dos postos CAJ e SKY,
-                            por notificação, WhatsApp, SMS ou e-mail.</span>
+                            por notificação, WhatsApp, SMS ou e-mail.
+                            <br>Autorizo também o uso da <strong>placa e do comprovante enviado</strong>
+                            para conferir, no abastecimento, que o desconto é usado por quem tem
+                            direito a ele. Esses dados não são usados para outra finalidade nem
+                            repassados a terceiros, e são apagados se a conta for encerrada.</span>
                         </label>
                         <small class="ajuda">Obrigatório: é assim que você fica sabendo o desconto do dia.</small>
 
@@ -125,6 +176,7 @@
         };
     </script>
     <script src="js/instalar.js?v=1"></script>
-    <script src="js/app-v2.js?v=10"></script>
+    <script src="js/comprovacao.js?v=1"></script>
+    <script src="js/app-v2.js?v=11"></script>
 </body>
 </html>

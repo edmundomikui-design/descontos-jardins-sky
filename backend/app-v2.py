@@ -38,6 +38,78 @@ def validar_cpf(cpf):
         return False
     return True
 
+# ==================== IDENTIFICAÇÃO DA CATEGORIA ====================
+# O desconto é para taxista e motorista de aplicativo. Sem nada que ligue a
+# pessoa à categoria, qualquer um se declara motorista e leva o desconto.
+#
+# Duas travas diferentes, porque as duas categorias são diferentes:
+#
+#  - COMPROVANTE (foto, no cadastro): taxista manda a licença; motorista de
+#    aplicativo manda o print do perfil dele no app de motorista. Não é prova
+#    inviolável — é atrito e rastro com nome em cima.
+#
+#  - PLACA (editável, conferida na bomba): no táxi ela é estável, porque
+#    acompanha a permissão quando o taxista troca de carro. No aplicativo o
+#    carro muda, então a placa vale para o dia e o motorista atualiza quando
+#    trocar. É a única conferência que não depende de sistema nenhum: ou bate
+#    com o carro na frente do frentista, ou não bate.
+
+# Formato antigo (ABC1234) e Mercosul (ABC1D23)
+_PLACA_ANTIGA = re.compile(r'^[A-Z]{3}[0-9]{4}$')
+_PLACA_MERCOSUL = re.compile(r'^[A-Z]{3}[0-9][A-Z][0-9]{2}$')
+
+# O que cada ocupação precisa comprovar
+PERFIL_OCUPACAO = {
+    'táxi':       {'registro': 'condutax', 'comprovante': 'licenca_taxi'},
+    'taxi':       {'registro': 'condutax', 'comprovante': 'licenca_taxi'},
+    'uber':       {'registro': 'conduapp', 'comprovante': 'perfil_app'},
+    'aplicativo': {'registro': 'conduapp', 'comprovante': 'perfil_app'},
+}
+
+DESCRICAO_COMPROVANTE = {
+    'licenca_taxi': 'a foto da sua licença de taxista (alvará ou CONDUTAX)',
+    'perfil_app': 'o print da tela de cadastro do seu aplicativo de motorista',
+    'convenio': 'o comprovante de vínculo com a empresa conveniada',
+}
+
+# ~1,4 MB de base64 ≈ 1 MB de imagem. O app já reduz a foto no celular;
+# o limite existe para ninguém entupir o banco mandando direto na API.
+LIMITE_FOTO_BASE64 = 1_400_000
+
+
+def normalizar_placa(placa):
+    """Devolve a placa só com letras e números, em maiúsculas, ou None."""
+    if not placa:
+        return None
+    limpa = re.sub(r'[^A-Za-z0-9]', '', str(placa)).upper()
+    return limpa or None
+
+
+def validar_placa(placa):
+    """Aceita o formato antigo e o Mercosul. Devolve erro em texto ou None."""
+    if not placa:
+        return 'Informe a placa do carro que você está usando.'
+    if len(placa) != 7:
+        return 'A placa deve ter 7 caracteres (exemplos: ABC1D23 ou ABC1234).'
+    if not (_PLACA_ANTIGA.match(placa) or _PLACA_MERCOSUL.match(placa)):
+        return 'Placa em formato inválido. Use ABC1D23 (Mercosul) ou ABC1234 (antiga).'
+    return None
+
+
+def validar_foto(foto, tipo_comprovante):
+    """Confere que veio uma imagem plausível, sem tentar adivinhar o conteúdo."""
+    descricao = DESCRICAO_COMPROVANTE.get(tipo_comprovante, 'o comprovante')
+    if not foto:
+        return f'Envie {descricao}.'
+    if not str(foto).startswith('data:image/'):
+        return 'Arquivo inválido. Envie uma imagem.'
+    if len(foto) > LIMITE_FOTO_BASE64:
+        return 'A imagem ficou grande demais. Tente de novo pelo aplicativo.'
+    if len(foto) < 2000:
+        return 'A imagem não foi enviada por completo. Tente de novo.'
+    return None
+
+
 def _cpf_mascarado(cpf):
     """Mostra só o miolo do CPF (***.123.456-**) para o frentista conferir
     a identidade sem expor o documento inteiro na pista."""
@@ -246,6 +318,35 @@ def cadastro():
         data_consentimento = agora_iso
         data_consentimento_parceiros = agora_iso if aceita_parceiros else None
 
+        # ---- comprovação da categoria e carro em uso ----
+        ocupacao = (data.get('ocupacao') or '').strip()
+        perfil = PERFIL_OCUPACAO.get(ocupacao.lower())
+
+        registro_tipo = perfil['registro'] if perfil else 'convenio'
+        tipo_comprovante = perfil['comprovante'] if perfil else 'convenio'
+        registro_numero = re.sub(r'[^A-Za-z0-9]', '', str(data.get('registro_numero') or '')).upper()
+        empresa_convenio = (data.get('empresa_convenio') or '').strip() or None
+
+        # A placa é a conferência da bomba, então vale para todo mundo.
+        # Quem troca de carro atualiza depois, em dois toques.
+        placa = normalizar_placa(data.get('placa'))
+        erro_placa = validar_placa(placa)
+        if erro_placa:
+            return jsonify({'erro': erro_placa}), 400
+
+        # A foto é a prova da categoria: licença de taxista ou print do perfil
+        # no app de motorista. O número do registro fica opcional.
+        foto_comprovante = data.get('foto_comprovante')
+        erro_foto = validar_foto(foto_comprovante, tipo_comprovante)
+        if erro_foto:
+            return jsonify({'erro': erro_foto}), 400
+
+        if registro_tipo == 'convenio' and not empresa_convenio:
+            return jsonify({
+                'erro': 'Informe a empresa do convênio. '
+                        'Sem convênio ativo, escolha Táxi ou Motorista de aplicativo.'
+            }), 400
+
         cpf = re.sub(r'\D', '', data.get('cpf'))
 
         conn = get_db()
@@ -253,23 +354,34 @@ def cadastro():
 
         cursor.execute('SELECT id FROM clientes WHERE cpf = ?', (cpf,))
         if cursor.fetchone():
+            conn.close()
             return jsonify({'erro': 'CPF já cadastrado'}), 400
 
         cursor.execute('SELECT id FROM clientes WHERE email = ?', (data.get('email'),))
         if cursor.fetchone():
+            conn.close()
             return jsonify({'erro': 'Email já cadastrado'}), 400
+
+        # Placa repetida não bloqueia — dois motoristas podem dividir o mesmo
+        # táxi por turno. Mas fica registrado e aparece no painel de suspeitas
+        # e na tela do frentista.
+        cursor.execute('SELECT COUNT(*) AS n FROM clientes WHERE placa = ?', (placa,))
+        linha = cursor.fetchone()
+        placa_repetida = (linha['n'] if linha else 0) > 0
 
         senha_hash = generate_password_hash(data.get('senha'))
 
         cursor.execute('''
             INSERT INTO clientes
             (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo, desconto_valor,
-             aceita_promocoes, data_consentimento, aceita_parceiros, data_consentimento_parceiros)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             aceita_promocoes, data_consentimento, aceita_parceiros, data_consentimento_parceiros,
+             placa, data_placa, registro_tipo, registro_numero, empresa_convenio,
+             foto_comprovante, foto_comprovante_tipo, data_foto_comprovante)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cpf,
             data.get('nome'),
-            data.get('ocupacao'),
+            ocupacao,
             data.get('tel'),
             data.get('endereco'),
             data.get('email'),
@@ -279,7 +391,15 @@ def cadastro():
             aceita_promocoes,
             data_consentimento,
             aceita_parceiros,
-            data_consentimento_parceiros
+            data_consentimento_parceiros,
+            placa,
+            agora_iso,
+            registro_tipo,
+            registro_numero or None,
+            empresa_convenio,
+            foto_comprovante,
+            tipo_comprovante,
+            agora_iso
         ))
 
         conn.commit()
@@ -288,7 +408,9 @@ def cadastro():
 
         return jsonify({
             'mensagem': 'Cadastro realizado! Confirme seu email.',
-            'cliente_id': cliente_id
+            'cliente_id': cliente_id,
+            'placa': placa,
+            'placa_ja_cadastrada': placa_repetida
         }), 201
 
     except Exception as e:
@@ -305,7 +427,10 @@ def login():
         conn = get_db()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT id, nome, email, senha_hash FROM clientes WHERE email = ?', (email,))
+        cursor.execute('''
+            SELECT id, nome, email, senha_hash, placa, ocupacao
+            FROM clientes WHERE email = ?
+        ''', (email,))
         cliente = cursor.fetchone()
         conn.close()
 
@@ -316,6 +441,8 @@ def login():
             'cliente_id': cliente['id'],
             'nome': cliente['nome'],
             'email': cliente['email'],
+            'placa': cliente['placa'],
+            'ocupacao': cliente['ocupacao'],
             'mensagem': 'Login realizado com sucesso'
         }), 200
 
@@ -323,6 +450,64 @@ def login():
         return jsonify({'erro': str(e)}), 500
 
 # ==================== ROTAS DE PRODUTOS ====================
+
+@app.route('/api/cliente/placa', methods=['POST'])
+def atualizar_placa():
+    """Troca a placa do carro em uso.
+
+    Motorista de aplicativo troca de carro com frequência — alugado, da frota,
+    o do fim de semana. Se a placa fosse fixa no cadastro, a conferência na
+    bomba falharia justamente para quem mais usa o app. Aqui ele atualiza em
+    dois toques, e o cupom congela a placa no momento em que é gerado.
+    """
+    try:
+        data = request.get_json()
+        cliente_id = data.get('cliente_id')
+        if not cliente_id:
+            return jsonify({'erro': 'cliente_id é obrigatório'}), 400
+
+        placa = normalizar_placa(data.get('placa'))
+        erro = validar_placa(placa)
+        if erro:
+            return jsonify({'erro': erro}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT placa FROM clientes WHERE id = ?', (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        anterior = cliente['placa']
+        agora_iso = datetime.now().isoformat()
+
+        cursor.execute('UPDATE clientes SET placa = ?, data_placa = ? WHERE id = ?',
+                       (placa, agora_iso, cliente_id))
+
+        # Troca de placa é exatamente o movimento que uma conta emprestada faria.
+        # Não bloqueia, mas fica gravado para o painel de suspeitas.
+        if anterior and anterior != placa:
+            cursor.execute('''
+                INSERT INTO auditoria
+                (data_hora, admin_usuario, admin_nivel, acao, campo,
+                 valor_anterior, valor_novo, detalhe)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                f'cliente:{cliente_id}', 'cliente', 'troca_placa', 'placa',
+                anterior, placa, f'Cliente {cliente_id} trocou a placa do carro em uso'
+            ))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({'mensagem': 'Placa atualizada.', 'placa': placa}), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 
 @app.route('/api/produtos', methods=['GET'])
 def listar_produtos():
@@ -597,7 +782,8 @@ def consultar_cupom():
         cursor.execute('''
             SELECT c.*, p.nome AS produto_nome, p.unidade, p.icone,
                    p.preco_atual, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
-                   cl.status AS cliente_status,
+                   cl.status AS cliente_status, cl.placa AS cliente_placa,
+                   cl.ocupacao AS cliente_ocupacao,
                    cl.desconto_tipo AS cli_desc_tipo, cl.desconto_valor AS cli_desc_valor
             FROM cupons c
             LEFT JOIN produtos p ON p.id = c.produto_id
@@ -605,6 +791,16 @@ def consultar_cupom():
             WHERE c.qrcode = ?
         ''', (qr,))
         cupom = cursor.fetchone()
+
+        # A mesma placa em vários cadastros pode ser táxi dividido por turno —
+        # ou conta emprestada. O frentista precisa ver isso antes de liberar.
+        placa = cupom['cliente_placa'] if cupom else None
+        contagem_placa = 1
+        if placa:
+            cursor.execute('SELECT COUNT(*) AS n FROM clientes WHERE placa = ?', (placa,))
+            linha = cursor.fetchone()
+            contagem_placa = (linha['n'] if linha else 1) or 1
+
         conn.close()
 
         if not cupom:
@@ -651,6 +847,10 @@ def consultar_cupom():
             'data_geracao': data_geracao,
             'cliente_nome': cupom['cliente_nome'],
             'cliente_cpf': _cpf_mascarado(cupom['cliente_cpf']),
+            'placa': placa,
+            'ocupacao': cupom['cliente_ocupacao'],
+            'placa_em_varios_cadastros': contagem_placa > 1,
+            'placa_qtd_cadastros': contagem_placa,
             'produto_id': cupom['produto_id'],
             'produto_nome': cupom['produto_nome'],
             'produto_icone': cupom['icone'],
@@ -776,8 +976,8 @@ def usar_cupom():
         cursor.execute('''
             INSERT INTO abastecimentos
             (cupom_id, cliente_id, produto_id, poster_id, data, hora, turno,
-             quantidade, valor_original, valor_desconto, valor_final)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             quantidade, valor_original, valor_desconto, valor_final, registrado_por)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cupom['id'],
             cupom['cliente_id'],
@@ -789,7 +989,8 @@ def usar_cupom():
             quantidade_agora,
             valor_sem_desconto,
             valor_desconto,
-            valor_final
+            valor_final,
+            request.admin['usuario']
         ))
 
         # Atualiza cupom
@@ -1616,6 +1817,169 @@ def atualizar_descontos():
         }), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
+@app.route('/api/admin/suspeitas', methods=['GET'])
+@exige_gerencia
+def admin_suspeitas():
+    """Padrões que merecem um olhar — não são acusações, são pistas.
+
+    A fraude que a foto do comprovante não pega é a de dentro: frentista que
+    cadastra amigos e libera desconto para eles. Isso não aparece num
+    abastecimento isolado, só no padrão ao longo dos dias.
+    """
+    try:
+        dias = int(request.args.get('dias', 30))
+        limite = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%d')
+
+        conn = get_db()
+        cursor = conn.cursor()
+        achados = {}
+
+        # 1. Mesma placa em vários cadastros.
+        # Táxi dividido por turno é legítimo; três contas no mesmo carro, nem tanto.
+        cursor.execute('''
+            SELECT placa, COUNT(*) AS qtd
+            FROM clientes
+            WHERE placa IS NOT NULL AND placa <> ''
+            GROUP BY placa
+            HAVING COUNT(*) > 1
+            ORDER BY COUNT(*) DESC
+        ''')
+        placas = []
+        for linha in cursor.fetchall():
+            cursor.execute('''
+                SELECT id, nome, ocupacao, data_criacao
+                FROM clientes WHERE placa = ? ORDER BY id
+            ''', (linha['placa'],))
+            placas.append({
+                'placa': linha['placa'],
+                'quantidade': linha['qtd'],
+                'clientes': [
+                    {'id': c['id'], 'nome': c['nome'], 'ocupacao': c['ocupacao'],
+                     'cadastrado_em': str(c['data_criacao'])[:10]}
+                    for c in cursor.fetchall()
+                ]
+            })
+        achados['placas_repetidas'] = placas
+
+        # 2. Motorista que só abastece com um frentista específico.
+        # Quem abastece de verdade pega turnos diferentes; quem tem combinado, não.
+        cursor.execute('''
+            SELECT a.cliente_id, cl.nome AS cliente_nome, cl.placa,
+                   COUNT(*) AS total,
+                   COUNT(DISTINCT a.registrado_por) AS operadores,
+                   MIN(a.registrado_por) AS operador
+            FROM abastecimentos a
+            JOIN clientes cl ON cl.id = a.cliente_id
+            WHERE a.data >= ? AND a.registrado_por IS NOT NULL
+            GROUP BY a.cliente_id, cl.nome, cl.placa
+            HAVING COUNT(*) >= 5 AND COUNT(DISTINCT a.registrado_por) = 1
+            ORDER BY COUNT(*) DESC
+        ''', (limite,))
+        achados['sempre_mesmo_frentista'] = [
+            {'cliente_id': l['cliente_id'], 'cliente_nome': l['cliente_nome'],
+             'placa': l['placa'], 'abastecimentos': l['total'], 'frentista': l['operador']}
+            for l in cursor.fetchall()
+        ]
+
+        # 3. Cadastros em rajada — vários no mesmo dia costuma ser mutirão de amigos
+        cursor.execute('''
+            SELECT substr(CAST(data_criacao AS VARCHAR), 1, 10) AS dia, COUNT(*) AS qtd
+            FROM clientes
+            WHERE substr(CAST(data_criacao AS VARCHAR), 1, 10) >= ?
+            GROUP BY substr(CAST(data_criacao AS VARCHAR), 1, 10)
+            HAVING COUNT(*) >= 5
+            ORDER BY COUNT(*) DESC
+        ''', (limite,))
+        achados['cadastros_em_rajada'] = [
+            {'dia': l['dia'], 'quantidade': l['qtd']} for l in cursor.fetchall()
+        ]
+
+        # 4. Quem abastece com desconto quase todo dia
+        cursor.execute('''
+            SELECT a.cliente_id, cl.nome AS cliente_nome, cl.placa, cl.ocupacao,
+                   COUNT(DISTINCT a.data) AS dias,
+                   SUM(a.quantidade) AS litros,
+                   SUM(a.valor_desconto) AS desconto
+            FROM abastecimentos a
+            JOIN clientes cl ON cl.id = a.cliente_id
+            WHERE a.data >= ?
+            GROUP BY a.cliente_id, cl.nome, cl.placa, cl.ocupacao
+            ORDER BY SUM(a.valor_desconto) DESC
+        ''', (limite,))
+        campeoes = []
+        for l in cursor.fetchall()[:15]:
+            campeoes.append({
+                'cliente_id': l['cliente_id'], 'cliente_nome': l['cliente_nome'],
+                'placa': l['placa'], 'ocupacao': l['ocupacao'],
+                'dias_com_abastecimento': l['dias'],
+                'litros': round(l['litros'] or 0, 2),
+                'desconto_total': round(l['desconto'] or 0, 2)
+            })
+        achados['maiores_beneficiados'] = campeoes
+
+        # 5. Trocas de placa — o movimento típico de conta emprestada
+        cursor.execute('''
+            SELECT data_hora, admin_usuario, valor_anterior, valor_novo
+            FROM auditoria
+            WHERE acao = 'troca_placa' AND data_hora >= ?
+            ORDER BY data_hora DESC
+        ''', (limite,))
+        trocas = [
+            {'quando': l['data_hora'], 'cliente': l['admin_usuario'],
+             'de': l['valor_anterior'], 'para': l['valor_novo']}
+            for l in cursor.fetchall()
+        ]
+        achados['trocas_de_placa'] = trocas[:50]
+
+        conn.close()
+
+        achados['periodo_dias'] = dias
+        achados['total_alertas'] = (
+            len(achados['placas_repetidas'])
+            + len(achados['sempre_mesmo_frentista'])
+            + len(achados['cadastros_em_rajada'])
+        )
+        return jsonify(achados), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/cliente/<int:cliente_id>/comprovante', methods=['GET'])
+@exige_gerencia
+def admin_comprovante(cliente_id):
+    """Devolve o comprovante enviado no cadastro, para conferência manual."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT nome, ocupacao, placa, registro_tipo, registro_numero,
+                   empresa_convenio, foto_comprovante, foto_comprovante_tipo,
+                   data_foto_comprovante
+            FROM clientes WHERE id = ?
+        ''', (cliente_id,))
+        c = cursor.fetchone()
+        conn.close()
+
+        if not c:
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        return jsonify({
+            'nome': c['nome'],
+            'ocupacao': c['ocupacao'],
+            'placa': c['placa'],
+            'registro_tipo': c['registro_tipo'],
+            'registro_numero': c['registro_numero'],
+            'empresa_convenio': c['empresa_convenio'],
+            'tipo_comprovante': c['foto_comprovante_tipo'],
+            'enviado_em': c['data_foto_comprovante'],
+            'imagem': c['foto_comprovante']
+        }), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 
 @app.route('/api/health', methods=['GET'])
 def health():
