@@ -3,9 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#2196F3">
-    <title>Descontos Jardins Sky - Meu Cupom</title>
-    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1e3a8a">
+    <title>CAJ SKY — Meu cupom</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icons/cajsky-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="CAJ SKY">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="dashboard-page">
@@ -162,6 +166,14 @@
         </div>
     </div>
 
-    <script src="js/app-v2.js?v=9"></script>
+    <script>
+        window.INSTALAR = {
+            titulo: 'Deixe o cupom a um toque',
+            texto: 'Instale o CAJ SKY na tela do celular: abre direto no seu cupom, mesmo sem internet na pista.',
+            cor: '#2563eb'
+        };
+    </script>
+    <script src="js/instalar.js?v=1"></script>
+    <script src="js/app-v2.js?v=10"></script>
 </body>
 </html>

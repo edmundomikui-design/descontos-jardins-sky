@@ -14,11 +14,9 @@ function setTxt(id, valor) {
 
 // ===== INICIALIZAÇÃO =====
 document.addEventListener('DOMContentLoaded', () => {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('js/service-worker.js').catch(err => {
-            console.log('Service Worker não registrado:', err);
-        });
-    }
+    // O service worker agora é registrado por js/instalar.js, a partir da raiz
+    // (/sw.js). Em /js/ ele só controlava aquela pasta e o Chrome não
+    // considerava o app instalável.
 
     if (window.location.pathname.includes('dashboard')) {
         verificarAutenticacao();

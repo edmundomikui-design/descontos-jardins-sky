@@ -1,0 +1,33 @@
+{
+  "name": "CAJ SKY Pista — leitura de cupom",
+  "short_name": "Pista",
+  "description": "Tela do frentista: lê o QR do cupom e registra o abastecimento nos postos CAJ e SKY.",
+  "start_url": "/frentista.html",
+  "id": "/frentista.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "scope": "/frentista.html",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icons/pista-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pista-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pista-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

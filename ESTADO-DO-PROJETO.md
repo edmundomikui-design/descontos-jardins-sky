@@ -36,6 +36,35 @@ use **Manual Deploy → Deploy latest commit** no painel dele.
 
 ---
 
+## Instalação no celular (é um PWA, não app de loja)
+
+Não existe app na App Store nem na Play Store. O CAJSKY é um **PWA**: instala
+direto do site, ganha ícone próprio, abre em tela cheia e funciona sem internet.
+Sem taxa anual, sem fila de aprovação, e toda correção publicada chega na hora.
+
+**São dois apps instaláveis, com ícones diferentes:**
+
+| App | Endereço | Ícone |
+|---|---|---|
+| CAJ SKY (motorista) | `/index.html` | gota azul com **%** |
+| Pista (frentista) | `/frentista.html` | QR verde sobre fundo escuro |
+
+**Como o convite aparece** (`js/instalar.js`, usado pelas duas telas):
+
+- **Android/Chrome** — o navegador avisa que dá para instalar; o app segura esse
+  aviso e mostra a própria faixa com o botão *Instalar agora*.
+- **iPhone/Safari** — não existe instalação automática, então a faixa ensina o
+  caminho: Compartilhar → Adicionar à Tela de Início.
+- Some sozinha se o app já estiver instalado. Se a pessoa fechar, só volta a
+  perguntar depois de 7 dias.
+- Cada tela personaliza o texto definindo `window.INSTALAR` antes de carregar o script.
+
+**Por que isso importa para o push de promoção-relâmpago:** no iPhone, notificação
+web **só é entregue se o app estiver na tela de início**. Sem instalar, o aviso
+"até as 14h sai a R$ X" não chega. É o pré-requisito daquela pendência.
+
+---
+
 ## O que já funciona
 
 ### App do cliente
@@ -121,9 +150,10 @@ Três níveis de acesso:
 - [ ] Tela no painel para listar/exportar quem aceitou receber mensagens
       (a base do disparo de campanhas), separando avisos do app x parceiros
 - [ ] **Push de promoção-relâmpago** — notificação curta com validade de horário
-      ("até as 14h a gasolina sai a R$ X"). O service-worker já existe; falta o
-      Web Push (chaves VAPID no backend, permissão no app) e uma tela no painel
-      para escrever a mensagem, escolher a validade e disparar.
+      ("até as 14h a gasolina sai a R$ X"). O service worker e a instalação já
+      estão prontos; falta o Web Push (chaves VAPID no backend, permissão no app)
+      e uma tela no painel para escrever a mensagem, escolher a validade e disparar.
+      Lembrar: no iPhone só chega para quem instalou o app na tela de início.
 - [ ] Convênio com empresas vizinhas via RH (ideia original do projeto)
 - [ ] Preço separado por posto, se algum dia CAJ e SKY divergirem
 
@@ -153,3 +183,12 @@ Anotado para não repetir:
 - `backend/teste_frentista.py` roda o fluxo da pista ponta a ponta num SQLite
   descartável: `python teste_frentista.py` dentro de `backend/`. Não encosta
   no banco de produção.
+- `frontend/teste_instalar.js` testa a faixa de instalação nos dois sistemas:
+  `npm install jsdom` e depois `node teste_instalar.js`.
+- O service worker **precisa ficar na raiz** (`/sw.js`). Em `/js/` ele só
+  controlava aquela pasta e o Chrome não oferecia a instalação. O `instalar.js`
+  ainda desfaz o registro antigo em `/js/` nos celulares que já o tinham.
+- Ícone `maskable` tem que sangrar até a borda, sem cantos arredondados: o
+  Android recorta no formato do aparelho e margem transparente vira canto vazio.
+- Os ícones são gerados por script (Pillow). Para mudar cor ou desenho, o
+  código está no histórico desta sessão — os PNG finais ficam em `frontend/icons/`.
