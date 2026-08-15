@@ -1,0 +1,183 @@
+/* ===== TELA DA PISTA (FRENTISTA) — CAJ / SKY =====
+   Pensada para celular na mão, ao sol, com pressa:
+   fonte grande, contraste alto, botões que não erram o dedo. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 17px;
+    line-height: 1.45;
+    min-height: 100vh;
+}
+
+.tela { min-height: 100vh; display: flex; flex-direction: column; }
+.tela[hidden] { display: none; }
+
+.conteudo { padding: 18px 16px 40px; max-width: 520px; width: 100%; margin: 0 auto; }
+.conteudo.centro { text-align: center; padding-top: 32px; }
+
+h1 { font-size: 26px; }
+h2 { font-size: 20px; margin-bottom: 16px; font-weight: 600; }
+
+hr { border: none; border-top: 1px solid #1e293b; margin: 16px 0; }
+
+/* ===== LOGIN ===== */
+.tela-login {
+    align-items: center; justify-content: center;
+    padding: 24px;
+    background: linear-gradient(160deg, #0f172a 0%, #1e3a8a 100%);
+}
+.caixa-login {
+    background: #111c33; border: 1px solid #24324d;
+    padding: 32px 26px; border-radius: 18px;
+    width: 100%; max-width: 400px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+}
+.marca { font-size: 44px; text-align: center; }
+.caixa-login h1 { text-align: center; margin-top: 4px; }
+.caixa-login .sub { text-align: center; color: #94a3b8; font-size: 15px; margin-bottom: 22px; }
+.rodape-login { color: #64748b; font-size: 13px; text-align: center; margin-top: 18px; }
+
+label, .rotulo-campo {
+    display: block; font-size: 14px; font-weight: 600;
+    color: #94a3b8; margin: 16px 0 6px;
+}
+
+input {
+    width: 100%; padding: 15px 14px;
+    background: #0b1424; color: #f1f5f9;
+    border: 1.5px solid #2b3a55; border-radius: 12px;
+    font-size: 18px; font-family: inherit;
+}
+input:focus { outline: none; border-color: #60a5fa; }
+input::placeholder { color: #475569; }
+
+/* Campo dos litros: número grande, é o que o frentista mais olha */
+#litros { font-size: 34px; font-weight: 700; text-align: center; padding: 18px 14px; }
+
+/* ===== BOTÕES ===== */
+.btn {
+    display: block; width: 100%;
+    padding: 16px; border: none; border-radius: 12px;
+    background: #2563eb; color: #fff;
+    font-size: 17px; font-weight: 600; font-family: inherit;
+    cursor: pointer;
+}
+.btn:active { transform: scale(.985); }
+.btn:disabled { background: #1e293b; color: #64748b; cursor: not-allowed; }
+.btn-grande { padding: 18px; font-size: 18px; margin-top: 18px; }
+.btn-secundario { background: #334155; }
+.btn-confirmar { background: #16a34a; }
+.btn-confirmar:disabled { background: #1e293b; color: #64748b; }
+
+.btn-texto {
+    background: none; border: none; color: #60a5fa;
+    font-size: 15px; font-weight: 600; font-family: inherit;
+    cursor: pointer; padding: 8px 4px;
+}
+.btn-cheio { width: 100%; text-align: center; margin-top: 10px; }
+
+/* ===== TOPO ===== */
+.topo {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 16px;
+    background: #0b1424; border-bottom: 1px solid #1e293b;
+    position: sticky; top: 0; z-index: 5;
+}
+.topo strong { font-size: 15px; }
+.chip {
+    display: inline-block; margin-left: 8px;
+    background: #1d4ed8; color: #fff;
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; letter-spacing: .4px;
+}
+
+/* ===== CÂMERA ===== */
+.area-camera { display: none; margin-bottom: 8px; }
+.area-camera.ativa { display: block; }
+#leitor {
+    width: 100%; border-radius: 14px; overflow: hidden;
+    background: #000; border: 1px solid #1e293b;
+}
+#leitor video { width: 100% !important; display: block; }
+.dica { color: #94a3b8; font-size: 14px; text-align: center; margin-top: 10px; }
+
+.ou {
+    display: flex; align-items: center; gap: 12px;
+    color: #64748b; font-size: 13px; margin: 24px 0 4px;
+}
+.ou::before, .ou::after { content: ''; flex: 1; height: 1px; background: #1e293b; }
+
+/* ===== CARTÃO DO CUPOM ===== */
+.cartao {
+    background: #111c33; border: 1px solid #24324d;
+    border-radius: 16px; padding: 18px; margin-bottom: 18px;
+}
+.rotulo { color: #94a3b8; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.valor-forte { font-size: 21px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
+.secundario { color: #64748b; font-size: 14px; }
+
+.precos { display: flex; gap: 20px; margin-top: 16px; align-items: flex-end; }
+.preco-riscado { font-size: 19px; color: #64748b; text-decoration: line-through; margin-top: 2px; }
+.preco-destaque { font-size: 30px; font-weight: 800; color: #4ade80; margin-top: 2px; }
+
+.saldo { margin-top: 16px; color: #cbd5e1; font-size: 15px; }
+.saldo strong { color: #fbbf24; font-size: 17px; }
+
+/* ===== FAIXA DE STATUS ===== */
+.faixa {
+    display: none; padding: 14px 16px; border-radius: 12px;
+    margin-bottom: 16px; font-weight: 600; font-size: 16px;
+}
+.faixa.ok      { display: block; background: #14532d; color: #bbf7d0; border: 1px solid #166534; }
+.faixa.bloqueio{ display: block; background: #7f1d1d; color: #fecaca; border: 1px solid #991b1b; }
+
+/* ===== TOTALIZADOR ===== */
+.totalizador {
+    background: #111c33; border: 1px solid #24324d;
+    border-radius: 14px; padding: 14px 16px; margin-top: 18px;
+}
+.linha {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 7px 0; font-size: 16px; color: #cbd5e1;
+}
+.linha.desconto span:last-child { color: #4ade80; }
+.linha.total {
+    border-top: 1px solid #24324d; margin-top: 8px; padding-top: 12px;
+    font-size: 20px; font-weight: 800; color: #f8fafc;
+}
+.linha.total span:last-child { color: #fbbf24; font-size: 26px; }
+
+/* ===== COMPROVANTE ===== */
+.selo-ok {
+    width: 78px; height: 78px; margin: 0 auto 14px;
+    background: #16a34a; color: #fff;
+    border-radius: 50%; font-size: 42px;
+    display: flex; align-items: center; justify-content: center;
+}
+.valor-gigante {
+    font-size: 46px; font-weight: 800; color: #fbbf24;
+    margin: 4px 0 22px; letter-spacing: -1px;
+}
+.resumo { text-align: left; }
+.resumo .linha { font-size: 15px; }
+.resumo .linha span:last-child { color: #f1f5f9; font-weight: 600; text-align: right; }
+.aviso-saldo { color: #fbbf24; font-size: 15px; margin-top: 16px; }
+
+/* ===== ERROS ===== */
+.erro {
+    display: none; margin-top: 14px; padding: 13px 15px;
+    background: #7f1d1d; color: #fecaca;
+    border: 1px solid #991b1b; border-radius: 12px; font-size: 15px;
+}
+.erro.visivel { display: block; }
+
+/* Telas pequenas: nada pode encolher a ponto de errar o toque */
+@media (max-width: 360px) {
+    body { font-size: 16px; }
+    .valor-gigante { font-size: 38px; }
+    .preco-destaque { font-size: 26px; }
+}

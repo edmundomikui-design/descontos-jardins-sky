@@ -73,6 +73,14 @@ body {
 }
 .btn-sair:hover { background: rgba(255, 255, 255, .28); }
 
+/* Atalho para a tela que o frentista usa na pista */
+.btn-pista {
+    background: #16a34a; color: #fff; text-decoration: none;
+    padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    white-space: nowrap;
+}
+.btn-pista:hover { background: #15803d; }
+
 /* ===== ABAS ===== */
 .abas { background: #fff; display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid #e5e7eb; overflow-x: auto; }
 .aba {

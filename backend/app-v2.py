@@ -38,6 +38,17 @@ def validar_cpf(cpf):
         return False
     return True
 
+def _cpf_mascarado(cpf):
+    """Mostra só o miolo do CPF (***.123.456-**) para o frentista conferir
+    a identidade sem expor o documento inteiro na pista."""
+    if not cpf:
+        return ''
+    d = re.sub(r'\D', '', cpf)
+    if len(d) != 11:
+        return cpf
+    return f'***.{d[3:6]}.{d[6:9]}-**'
+
+
 def validar_email(email):
     """Valida email básico"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
@@ -566,16 +577,110 @@ def cupons_ativos():
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
+@app.route('/api/cupom/consultar', methods=['GET'])
+@exige_admin
+def consultar_cupom():
+    """Lê um QR code e devolve o cupom SEM registrar nada.
+
+    É o que a tela do frentista chama assim que a câmera lê o código: mostra
+    de quem é o cupom, qual combustível, o preço já com desconto e quantos
+    litros ainda restam, para o frentista conferir antes de liberar a bomba.
+    """
+    try:
+        qr = (request.args.get('qrcode') or '').strip()
+        if not qr:
+            return jsonify({'erro': 'Informe o código do cupom'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT c.*, p.nome AS produto_nome, p.unidade, p.icone,
+                   p.preco_atual, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
+                   cl.status AS cliente_status,
+                   cl.desconto_tipo AS cli_desc_tipo, cl.desconto_valor AS cli_desc_valor
+            FROM cupons c
+            LEFT JOIN produtos p ON p.id = c.produto_id
+            LEFT JOIN clientes cl ON cl.id = c.cliente_id
+            WHERE c.qrcode = ?
+        ''', (qr,))
+        cupom = cursor.fetchone()
+        conn.close()
+
+        if not cupom:
+            return jsonify({
+                'erro': 'Cupom não encontrado. Confira o código ou peça ao '
+                        'motorista para gerar um novo no aplicativo.'
+            }), 404
+
+        # Preço e desconto ficam CONGELADOS na geração — reajuste posterior
+        # não muda um cupom já emitido.
+        preco = cupom['preco_unitario'] or cupom['preco_atual'] or 0
+        desc_unidade = cupom['desconto_unitario'] or 0
+        if desc_unidade <= 0:
+            tipo = cupom['desconto_tipo'] or cupom['cli_desc_tipo']
+            valor = cupom['desconto_valor'] or cupom['cli_desc_valor'] or 0
+            desc_unidade = desconto_por_unidade(preco, valor, tipo)
+
+        permitida = cupom['quantidade_permitida'] or 0
+        utilizada = cupom['quantidade_utilizada'] or 0
+        restante = round(permitida - utilizada, 2)
+
+        data_geracao = str(cupom['data_geracao'])[:10]
+        hoje = str(datetime.now().date())
+
+        # Um único lugar decide se pode abastecer — a tela só exibe o motivo.
+        if data_geracao != hoje:
+            valido, motivo = False, (
+                f'Cupom de {data_geracao[8:10]}/{data_geracao[5:7]}. '
+                f'Vale só no dia em que foi gerado — peça um novo no aplicativo.'
+            )
+        elif cupom['cliente_status'] and cupom['cliente_status'] != 'ativo':
+            valido, motivo = False, 'Cadastro do motorista está inativo.'
+        elif restante <= 0:
+            valido, motivo = False, 'Cupom já usado por completo hoje.'
+        else:
+            valido, motivo = True, None
+
+        return jsonify({
+            'valido': valido,
+            'motivo': motivo,
+            'cupom_id': cupom['id'],
+            'qrcode': qr,
+            'status': cupom['status'],
+            'data_geracao': data_geracao,
+            'cliente_nome': cupom['cliente_nome'],
+            'cliente_cpf': _cpf_mascarado(cupom['cliente_cpf']),
+            'produto_id': cupom['produto_id'],
+            'produto_nome': cupom['produto_nome'],
+            'produto_icone': cupom['icone'],
+            'unidade': cupom['unidade'] or 'L',
+            'preco_bomba': round(preco, 2),
+            'desconto_por_unidade': round(desc_unidade, 2),
+            'preco_com_desconto': round(preco - desc_unidade, 2),
+            'quantidade_permitida': round(permitida, 2),
+            'quantidade_utilizada': round(utilizada, 2),
+            'quantidade_restante': restante
+        }), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
 @app.route('/api/cupom/usar', methods=['POST'])
+@exige_admin
 def usar_cupom():
-    """Registra uso do cupom (chamado pelo caixa)"""
+    """Registra o abastecimento. Chamado pela tela do frentista na pista."""
     try:
         data = request.get_json()
         qrcode = data.get('qrcode')
-        poster_id = data.get('poster_id')  # CAJ ou SKY
         produto_id = data.get('produto_id')
         quantidade_agora = float(data.get('quantidade', 0))
         valor_sem_desconto = float(data.get('valor_sem_desconto', 0))
+
+        # O posto vem do usuário logado — o frentista não escolhe, para o
+        # abastecimento não cair no caixa do posto errado.
+        poster_id = request.admin['poster_id'] or data.get('poster_id')
 
         if not qrcode or not produto_id or quantidade_agora <= 0:
             return jsonify({'erro': 'Dados incompletos'}), 400
@@ -591,17 +696,20 @@ def usar_cupom():
         cupom = cursor.fetchone()
 
         if not cupom:
-            return jsonify({'erro': 'Cupom não encontrado ou expirado'}), 404
+            conn.close()
+            return jsonify({'erro': 'Cupom não encontrado ou já utilizado por completo'}), 404
 
         # Valida validade: cupom vale apenas no dia em que foi gerado
         data_geracao = str(cupom['data_geracao'])[:10]
         if data_geracao != str(datetime.now().date()):
+            conn.close()
             return jsonify({
                 'erro': f'Cupom expirado (gerado em {data_geracao}). O cliente deve gerar um novo cupom hoje.'
             }), 400
 
         # Valida produto
         if cupom['produto_id'] != produto_id:
+            conn.close()
             return jsonify({'erro': 'Produto não corresponde ao cupom'}), 400
 
         # Busca cliente e produto
@@ -623,14 +731,27 @@ def usar_cupom():
         litros_restantes = cupom['quantidade_permitida'] - cupom['quantidade_utilizada']
 
         if litros_restantes <= 0:
-            return jsonify({'erro': 'Cupom expirado (limite atingido)'}), 400
+            conn.close()
+            return jsonify({'erro': 'Cupom já utilizado por completo hoje'}), 400
 
         if quantidade_agora > litros_restantes:
+            conn.close()
             return jsonify({
-                'erro': f'Quantidade excede limite',
+                'erro': f'Excede o saldo do cupom: restam {litros_restantes:.2f} L '
+                        f'e foram informados {quantidade_agora:.2f} L.',
                 'limite': litros_restantes,
                 'solicitado': quantidade_agora
             }), 400
+
+        # Se a tela não mandou o valor, calcula pelo preço congelado no cupom.
+        # Evita que um erro de digitação na pista vire um valor cobrado errado.
+        if valor_sem_desconto <= 0:
+            preco_congelado = cupom['preco_unitario'] or 0
+            if preco_congelado <= 0:
+                cursor.execute('SELECT preco_atual FROM produtos WHERE id = ?', (produto_id,))
+                linha = cursor.fetchone()
+                preco_congelado = (linha['preco_atual'] if linha else 0) or 0
+            valor_sem_desconto = round(preco_congelado * quantidade_agora, 2)
 
         # Desconto: usa o valor CONGELADO no cupom (preço/desconto do momento da geração).
         # Se o cupom é antigo e não tem esse dado, cai no desconto do cliente.
@@ -687,13 +808,25 @@ def usar_cupom():
             cupom['id']
         ))
 
+        # Deixa rastro de quem liberou o abastecimento na pista
+        registrar_auditoria(
+            cursor, request.admin, 'abastecimento',
+            produto_id=produto_id,
+            produto_nome=produto['nome'] if produto else None,
+            detalhe=(f"{quantidade_agora:.2f} L para {cliente['nome']} no posto {poster_id} — "
+                     f"cobrado R$ {valor_final:.2f} (desconto R$ {valor_desconto:.2f})")
+        )
+
         conn.commit()
         conn.close()
 
         return jsonify({
-            'mensagem': 'Cupom utilizado com sucesso!',
+            'mensagem': 'Abastecimento registrado!',
             'cliente': cliente['nome'],
             'produto': produto['nome'] if produto else 'N/A',
+            'posto': poster_id,
+            'registrado_por': request.admin['nome'] or request.admin['usuario'],
+            'hora': agora.strftime('%H:%M'),
             'quantidade': quantidade_agora,
             'valor_original': round(valor_sem_desconto, 2),
             'valor_desconto': round(valor_desconto, 2),

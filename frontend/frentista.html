@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0f172a">
+    <title>Pista — CAJ / SKY</title>
+    <link rel="stylesheet" href="css/frentista.css?v=1">
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="tela-login" class="tela tela-login">
+    <div class="caixa-login">
+        <div class="marca">⛽</div>
+        <h1>Pista</h1>
+        <p class="sub">Leitura de cupom — CAJ e SKY</p>
+
+        <form id="form-login" onsubmit="return entrar(event)">
+            <label for="login-usuario">Usuário</label>
+            <input type="text" id="login-usuario" autocomplete="username"
+                   autocapitalize="none" required>
+
+            <label for="login-senha">Senha</label>
+            <input type="password" id="login-senha" autocomplete="current-password" required>
+
+            <button type="submit" class="btn btn-grande" id="btn-entrar">Entrar</button>
+        </form>
+
+        <p id="login-erro" class="erro"></p>
+        <p class="rodape-login">O acesso é o mesmo do painel. Fale com o responsável se não tiver o seu.</p>
+    </div>
+</section>
+
+
+<!-- ============ LEITURA ============ -->
+<section id="tela-leitura" class="tela" hidden>
+    <header class="topo">
+        <div>
+            <strong id="topo-nome">—</strong>
+            <span id="topo-posto" class="chip">—</span>
+        </div>
+        <button class="btn-texto" onclick="sair()">Sair</button>
+    </header>
+
+    <div class="conteudo">
+        <h2>Ler o cupom do motorista</h2>
+
+        <div id="area-camera" class="area-camera">
+            <div id="leitor"></div>
+            <p id="camera-dica" class="dica">Aponte para o QR code na tela do celular do motorista.</p>
+        </div>
+
+        <button id="btn-camera" class="btn btn-grande" onclick="alternarCamera()">
+            📷 Ligar a câmera
+        </button>
+
+        <div class="ou"><span>ou digite o código</span></div>
+
+        <form id="form-manual" onsubmit="return consultarManual(event)">
+            <input type="text" id="codigo-manual" inputmode="latin"
+                   autocapitalize="none" autocomplete="off" spellcheck="false"
+                   placeholder="Código embaixo do QR (12 caracteres)">
+            <button type="submit" class="btn btn-secundario btn-grande">Buscar cupom</button>
+        </form>
+
+        <p id="leitura-erro" class="erro"></p>
+    </div>
+</section>
+
+
+<!-- ============ CONFERÊNCIA ============ -->
+<section id="tela-cupom" class="tela" hidden>
+    <header class="topo">
+        <button class="btn-texto" onclick="voltarParaLeitura()">‹ Voltar</button>
+        <span id="cupom-hora" class="chip">—</span>
+    </header>
+
+    <div class="conteudo">
+        <div id="faixa-status" class="faixa"></div>
+
+        <div class="cartao">
+            <p class="rotulo">Motorista</p>
+            <p class="valor-forte" id="cupom-cliente">—</p>
+            <p class="secundario" id="cupom-cpf">—</p>
+
+            <hr>
+
+            <p class="rotulo">Combustível</p>
+            <p class="valor-forte" id="cupom-produto">—</p>
+
+            <div class="precos">
+                <div>
+                    <p class="rotulo">Preço de bomba</p>
+                    <p class="preco-riscado" id="cupom-preco-bomba">—</p>
+                </div>
+                <div>
+                    <p class="rotulo">Com desconto</p>
+                    <p class="preco-destaque" id="cupom-preco-final">—</p>
+                </div>
+            </div>
+
+            <p class="saldo">Saldo do cupom hoje: <strong id="cupom-restante">—</strong></p>
+        </div>
+
+        <div id="bloco-abastecimento">
+            <label for="litros" class="rotulo-campo">Litros abastecidos (o que marcou na bomba)</label>
+            <input type="number" id="litros" inputmode="decimal" step="0.01" min="0.01"
+                   placeholder="0,00" oninput="recalcular()">
+
+            <button class="btn-texto btn-cheio" onclick="usarSaldoTotal()">
+                Usar o saldo inteiro (<span id="atalho-saldo">—</span>)
+            </button>
+
+            <div class="totalizador">
+                <div class="linha">
+                    <span>Valor sem desconto</span>
+                    <span id="calc-bruto">R$ 0,00</span>
+                </div>
+                <div class="linha desconto">
+                    <span>Desconto do cupom</span>
+                    <span id="calc-desconto">− R$ 0,00</span>
+                </div>
+                <div class="linha total">
+                    <span>Cobrar do motorista</span>
+                    <span id="calc-final">R$ 0,00</span>
+                </div>
+            </div>
+
+            <button id="btn-confirmar" class="btn btn-grande btn-confirmar"
+                    onclick="confirmar()" disabled>
+                Confirmar abastecimento
+            </button>
+        </div>
+
+        <p id="cupom-erro" class="erro"></p>
+    </div>
+</section>
+
+
+<!-- ============ COMPROVANTE ============ -->
+<section id="tela-ok" class="tela" hidden>
+    <div class="conteudo centro">
+        <div class="selo-ok">✓</div>
+        <h2 id="ok-titulo">Abastecimento registrado</h2>
+
+        <p class="rotulo">Cobrar do motorista</p>
+        <p class="valor-gigante" id="ok-valor">R$ 0,00</p>
+
+        <div class="cartao resumo">
+            <div class="linha"><span>Motorista</span><span id="ok-cliente">—</span></div>
+            <div class="linha"><span>Combustível</span><span id="ok-produto">—</span></div>
+            <div class="linha"><span>Litros</span><span id="ok-litros">—</span></div>
+            <div class="linha"><span>Economia dele</span><span id="ok-economia">—</span></div>
+            <div class="linha"><span>Posto / hora</span><span id="ok-posto">—</span></div>
+        </div>
+
+        <p id="ok-saldo" class="aviso-saldo"></p>
+
+        <button class="btn btn-grande" onclick="voltarParaLeitura()">Ler o próximo cupom</button>
+    </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="js/frentista.js?v=1"></script>
+</body>
+</html>

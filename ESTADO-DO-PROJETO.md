@@ -13,6 +13,7 @@ Aplicativo de descontos para motoristas de aplicativo e taxistas nos postos
 |---|---|
 | App do cliente | https://descontos-jardins-sky.vercel.app |
 | Painel administrativo | https://descontos-jardins-sky.vercel.app/admin.html |
+| **Tela da pista (frentista)** | https://descontos-jardins-sky.vercel.app/frentista.html |
 | Backend (API) | https://descontos-jardins-sky-1.onrender.com |
 | Código | https://github.com/edmundomikui-design/descontos-jardins-sky |
 | Pasta local | `C:\PESSOAIS\CLAUDE IA\aplicativo CAJSKY\pwa-descontos` |
@@ -56,6 +57,31 @@ use **Manual Deploy → Deploy latest commit** no painel dele.
 - Botão para salvar o QR code na galeria
 - Cupom vale **somente no dia da geração**
 
+### Tela da pista (frentista) — `frentista.html`
+Feita para celular na mão, ao sol: fundo escuro, números grandes, poucos toques.
+Atalho **📷 Pista** no topo do painel administrativo.
+
+1. **Entra** com o mesmo usuário do painel (o nível *Caixa* já basta).
+   O posto vem do cadastro do usuário — o frentista não escolhe, então o
+   abastecimento nunca cai no caixa do posto errado.
+2. **Lê o QR** pela câmera traseira. Se a câmera falhar ou a tela do motorista
+   estiver ruim, dá para **digitar o código** de 12 caracteres.
+3. **Confere o cupom** antes de liberar a bomba: nome do motorista, CPF
+   mascarado (`***.123.456-**`), combustível, preço de bomba riscado, preço com
+   desconto em destaque e o saldo de litros do dia.
+   Faixa verde "pode abastecer" ou vermelha com o motivo do bloqueio.
+4. **Digita os litros** que marcaram na bomba (tem o atalho "usar o saldo
+   inteiro"). A tela calcula na hora e mostra grande **quanto cobrar**.
+5. **Confirma** e vê o comprovante com o valor, a economia do motorista e
+   quantos litros ainda restam no cupom.
+
+Endpoints usados: `GET /api/cupom/consultar` (novo — só consulta, não baixa
+saldo) e `POST /api/cupom/usar`. **Os dois agora exigem login.**
+Se a tela não mandar o valor, o servidor o calcula pelo preço congelado no
+cupom — erro de digitação na pista não vira valor cobrado errado.
+Cada abastecimento deixa rastro na auditoria: quem liberou, em que posto,
+quantos litros e quanto foi cobrado.
+
 ### Painel administrativo
 Três níveis de acesso:
 
@@ -88,8 +114,9 @@ Três níveis de acesso:
 
 - [ ] Cadastrar os **custos reais** de cada produto no painel
       (sem custo cadastrado a Gerência não consegue dar desconto — comportamento proposital)
-- [ ] Tela para o frentista registrar o abastecimento lendo o QR code
-      (hoje a API `/api/cupom/usar` existe, mas não há tela)
+- [x] ~~Tela para o frentista registrar o abastecimento lendo o QR code~~ — pronta
+- [ ] Criar um usuário nível **Caixa** para cada frentista (Painel → Usuários),
+      já com o posto certo (CAJ ou SKY). Sem isso ninguém entra na tela da pista.
 - [ ] Trocar o servidor de desenvolvimento do Flask por gunicorn (~10 min)
 - [ ] Tela no painel para listar/exportar quem aceitou receber mensagens
       (a base do disparo de campanhas), separando avisos do app x parceiros
@@ -120,3 +147,9 @@ Anotado para não repetir:
   `CACHE_NAME` do `service-worker.js`, senão o navegador serve a versão velha.
 - Comparações de preço arredondam para centavos antes de comparar —
   `6.09 - 0.37` em ponto flutuante dá `5.7199...` e reprovaria um valor válido.
+- A câmera do navegador **só funciona em HTTPS** (ou `localhost`). Como o app
+  roda no Vercel, já está resolvido — mas testar abrindo o arquivo direto do
+  disco não vai ligar a câmera.
+- `backend/teste_frentista.py` roda o fluxo da pista ponta a ponta num SQLite
+  descartável: `python teste_frentista.py` dentro de `backend/`. Não encosta
+  no banco de produção.
