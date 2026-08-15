@@ -609,3 +609,39 @@ html, body {
 
 /* preços na lista de produtos */
 .produto-preco .preco-valor { font-weight: 600; }
+
+/* consentimento de marketing no cadastro */
+.form-consentimento {
+    background: #f5f7fa;
+    border: 1px solid #e0e6ed;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #333;
+    font-weight: 400;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    margin-top: 2px;
+    accent-color: #2196F3;
+    cursor: pointer;
+}
+
+.form-consentimento .ajuda {
+    display: block;
+    margin-top: 6px;
+    margin-left: 28px;
+    font-size: 12px;
+    color: #777;
+}

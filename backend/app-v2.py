@@ -233,10 +233,15 @@ def cadastro():
 
         senha_hash = generate_password_hash(data.get('senha'))
 
+        # Consentimento LGPD: opcional, guardado com a data em que foi dado
+        aceita_promocoes = 1 if data.get('aceita_promocoes') in (True, 1, '1', 'true', 'on') else 0
+        data_consentimento = datetime.now().isoformat() if aceita_promocoes else None
+
         cursor.execute('''
             INSERT INTO clientes
-            (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo, desconto_valor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo, desconto_valor,
+             aceita_promocoes, data_consentimento)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cpf,
             data.get('nome'),
@@ -246,7 +251,9 @@ def cadastro():
             data.get('email'),
             senha_hash,
             'fixo',  # Tipo: valor fixo em reais
-            1.00     # Desconto padrão: R$ 1,00 por litro
+            1.00,    # Desconto padrão: R$ 1,00 por litro
+            aceita_promocoes,
+            data_consentimento
         ))
 
         conn.commit()

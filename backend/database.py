@@ -148,6 +148,8 @@ def _schema(pg):
             desconto_valor {real} NOT NULL,
             status TEXT DEFAULT 'ativo',
             confirmado INTEGER DEFAULT 0,
+            aceita_promocoes INTEGER DEFAULT 0,
+            data_consentimento TEXT,
             data_criacao TIMESTAMP DEFAULT {agora},
             data_atualizacao TIMESTAMP DEFAULT {agora}
         )''',
@@ -260,6 +262,11 @@ PRODUTOS_PADRAO = [
 
 # Colunas acrescentadas depois — aplicadas em bancos que já existem
 COLUNAS_NOVAS = {
+    'clientes': [
+        # Consentimento LGPD para envio de promoções
+        ('aceita_promocoes', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
+        ('data_consentimento', 'TEXT', 'TEXT'),
+    ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
         ('quantidade_utilizada', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),

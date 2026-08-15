@@ -68,7 +68,8 @@ function setupLoginForm() {
                 endereco: document.getElementById('cadastro-endereco').value,
                 email: document.getElementById('cadastro-email').value,
                 senha: document.getElementById('cadastro-senha').value,
-                confirmacao: document.getElementById('cadastro-confirmacao').value
+                confirmacao: document.getElementById('cadastro-confirmacao').value,
+                aceita_promocoes: document.getElementById('cadastro-promocoes').checked
             };
             await fazerCadastro(dados);
         });
