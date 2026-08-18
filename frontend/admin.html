@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#1a237e">
     <title>Painel Administrativo - Jardins Sky</title>
-    <link rel="stylesheet" href="css/admin.css?v=3">
+    <link rel="stylesheet" href="css/admin.css?v=4">
 </head>
 <body>
 
@@ -51,6 +51,7 @@
     <nav class="abas">
         <button class="aba ativa" data-aba="caixa" onclick="trocarAba('caixa')">📊 Fechamento de Caixa</button>
         <button class="aba somente-gerencia" data-aba="precos" onclick="trocarAba('precos')">💲 Preços e Descontos</button>
+        <button class="aba" data-aba="cupons" onclick="trocarAba('cupons')">🎫 Cupons do Dia</button>
         <button class="aba somente-gerencia" data-aba="convenios" onclick="trocarAba('convenios')">
             🏢 Convênios <span id="selo-pendentes" class="selo-pendentes" hidden>0</span>
         </button>
@@ -137,7 +138,95 @@
         </div>
     </section>
 
-    <!-- ===== PADRÕES SUSPEITOS ===== -->
+    <!-- ===== CUPONS DO DIA (tela do caixa) ===== -->
+    <section id="aba-cupons" class="conteudo" style="display:none;">
+
+        <!-- Leitura do código: o campo fica sempre em foco, então leitor USB
+             de código de barras (que digita sozinho e dá Enter) funciona
+             igual a digitar na mão. -->
+        <div class="card" id="card-leitura">
+            <h3>Ler cupom do motorista</h3>
+            <p class="ajuda">
+                Digite o código que aparece embaixo do QR code, ou passe o leitor.
+                O saldo é conferido pelo sistema — cupom já esgotado não passa.
+            </p>
+            <form onsubmit="return lerCupomCaixa(event)" class="filtros">
+                <label style="flex:1; min-width:260px;">Código do cupom
+                    <input type="text" id="cupom-codigo" autocomplete="off" spellcheck="false"
+                           placeholder="Ex.: CAJSKY-000123-ABCD"
+                           style="font-size:18px; letter-spacing:1px;">
+                </label>
+                <button type="submit" class="btn btn-primary">Consultar</button>
+            </form>
+            <div id="cupom-leitura-erro" class="msg-erro"></div>
+        </div>
+
+        <!-- Cupom encontrado: conferência + baixa -->
+        <div class="card" id="card-cupom-aberto" style="display:none;">
+            <div id="cupom-faixa" class="faixa"></div>
+            <div id="cupom-detalhe"></div>
+
+            <div id="bloco-baixa" style="display:none; margin-top:14px;">
+                <p id="nota-uso-unico" hidden
+                   style="background:#fff3e0; border-left:4px solid #FF9800; padding:10px 12px;
+                          border-radius:6px; color:#e65100; font-weight:600; margin:0 0 12px;"></p>
+                <div class="filtros">
+                    <label>Litros abastecidos
+                        <input type="number" id="baixa-litros" step="0.01" min="0.01"
+                               style="font-size:18px;">
+                    </label>
+                    <label>Valor sem desconto (R$)
+                        <input type="number" id="baixa-valor" step="0.01" min="0"
+                               placeholder="opcional">
+                    </label>
+                    <button onclick="usarSaldoTotalCaixa()" class="btn">
+                        Encher o saldo (<span id="baixa-saldo">0</span>)
+                    </button>
+                    <button onclick="confirmarBaixaCaixa()" class="btn btn-primary" id="btn-baixa">
+                        ✅ Dar baixa
+                    </button>
+                    <button onclick="fecharCupomCaixa()" class="btn" style="background:#999;">
+                        Cancelar
+                    </button>
+                </div>
+                <div id="baixa-erro" class="msg-erro"></div>
+            </div>
+        </div>
+
+        <!-- Resumo do dia -->
+        <div id="cupons-resumo" class="resumo-suspeitas"></div>
+
+        <!-- Lista do dia -->
+        <div class="card">
+            <div class="filtros">
+                <label>Dia
+                    <input type="date" id="cupons-data" onchange="carregarCuponsDoDia()">
+                </label>
+                <label>Situação
+                    <select id="cupons-filtro" onchange="renderizarCuponsDoDia()">
+                        <option value="">Todas</option>
+                        <option value="emitido">Emitidos (sem uso)</option>
+                        <option value="parcial">Parcialmente usados</option>
+                        <option value="esgotado">Esgotados</option>
+                    </select>
+                </label>
+                <label style="flex:1; min-width:200px;">Procurar
+                    <input type="text" id="cupons-busca" placeholder="nome, placa ou código"
+                           oninput="renderizarCuponsDoDia()">
+                </label>
+                <button onclick="carregarCuponsDoDia()" class="btn btn-primary">Atualizar</button>
+                <label style="display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="cupons-auto" checked onchange="alternarAutoCupons()">
+                    Atualizar sozinho
+                </label>
+            </div>
+            <p class="ajuda" id="cupons-atualizado"></p>
+            <div id="cupons-conteudo" class="rolagem">
+                <p class="vazio">Carregando…</p>
+            </div>
+        </div>
+    </section>
+
     <!-- ===== CONVÊNIOS COM EMPRESAS ===== -->
     <section id="aba-convenios" class="conteudo" style="display:none;">
         <p class="ajuda">
@@ -198,6 +287,7 @@
         </div>
     </section>
 
+    <!-- ===== PADRÕES SUSPEITOS ===== -->
     <section id="aba-suspeitas" class="conteudo" style="display:none;">
         <p class="ajuda">
             Nada aqui é acusação — são padrões que valem uma olhada.
