@@ -440,7 +440,7 @@ function salvarQRCode() {
         return;
     }
 
-    const nomeProduto = (document.getElementById('produto-nome')?.textContent || 'cupom')
+    const nomeProduto = (document.getElementById('cupom-produto-nome')?.textContent || 'cupom')
         .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
     const hoje = new Date().toISOString().slice(0, 10);
 
@@ -450,6 +450,45 @@ function salvarQRCode() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+// Compartilha o QR code por WhatsApp (ou qualquer app) usando o menu nativo
+// de compartilhamento do celular. Se o celular não suportar compartilhar
+// imagem direto, salva o arquivo e avisa o cliente para anexar manualmente.
+async function compartilharQRCode() {
+    const img = document.getElementById('qrcode-img');
+    if (!img || !img.src) {
+        mostrarAviso('Nenhum cupom aberto para compartilhar.');
+        return;
+    }
+
+    const nomeProduto = (document.getElementById('cupom-produto-nome')?.textContent || 'cupom')
+        .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+    const hoje = new Date().toISOString().slice(0, 10);
+    const nomeArquivo = `cupom-${nomeProduto}-${hoje}.png`;
+
+    try {
+        const resposta = await fetch(img.src);
+        const blob = await resposta.blob();
+        const arquivo = new File([blob], nomeArquivo, { type: 'image/png' });
+
+        if (navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+            await navigator.share({
+                files: [arquivo],
+                title: 'Meu cupom CAJ SKY',
+                text: 'Aqui está meu QR code de desconto CAJ SKY'
+            });
+        } else {
+            // Celular não permite compartilhar arquivo direto (ex.: iPhone
+            // mais antigo ou navegador não suportado): salva e orienta.
+            salvarQRCode();
+            mostrarAviso('Seu celular não permite enviar a imagem direto pelo WhatsApp. Salvei o QR code — agora é só abrir o WhatsApp e anexar a imagem salva.');
+        }
+    } catch (erro) {
+        if (erro.name !== 'AbortError') {
+            mostrarAviso('Não consegui compartilhar. Tente salvar o QR code e enviar manualmente pelo WhatsApp.');
+        }
+    }
 }
 
 async function gerarCupomProduto(produtoId, botao) {
