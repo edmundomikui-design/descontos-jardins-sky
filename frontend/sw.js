@@ -8,7 +8,7 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
-const CACHE = 'cajsky-v11';
+const CACHE = 'cajsky-v12';
 
 const ESSENCIAIS = [
     '/',
@@ -54,7 +54,11 @@ self.addEventListener('fetch', evento => {
     if (req.url.includes('/api/')) return;
 
     evento.respondWith(
-        fetch(req)
+        // "no-store" ignora qualquer cópia guardada pelo próprio navegador
+        // (fora do nosso controle) e vai direto na rede. Sem isso, "rede
+        // primeiro" às vezes não buscava nada novo de verdade — só repetia
+        // uma cópia antiga que o navegador tinha guardado por conta própria.
+        fetch(req, { cache: 'no-store' })
             .then(resposta => {
                 if (resposta && resposta.status === 200 && resposta.type !== 'error') {
                     const copia = resposta.clone();
