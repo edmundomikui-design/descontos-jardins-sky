@@ -86,11 +86,60 @@ function ajustarCamposOcupacao() {
     document.getElementById('grupo-convenio').style.display =
         perfil.pedeConvenio ? 'block' : 'none';
 
+    // A lista de empresas só é buscada quando alguém escolhe "Outro" — não faz
+    // sentido baixar isso para o taxista, que é a maioria.
+    if (perfil.pedeConvenio) carregarEmpresasConvenio();
+
     // Câmera direto só faz sentido para fotografar um documento físico.
     // Print de tela vem da galeria.
     const entrada = document.getElementById('cadastro-foto');
     if (ocupacao === 'Uber') entrada.removeAttribute('capture');
     else entrada.setAttribute('capture', 'environment');
+}
+
+// ---------- empresas conveniadas ----------
+//
+// A empresa deixou de ser campo de texto livre. Antes bastava escrever
+// "Itaú" para passar por funcionário de uma empresa que nem convênio tinha.
+// Agora a gerência cadastra quem assinou contrato e o funcionário só escolhe
+// da lista — quem não tem convênio não consegue nem tentar.
+
+let empresasConvenioCarregadas = false;
+
+async function carregarEmpresasConvenio() {
+    if (empresasConvenioCarregadas) return;
+
+    const campo = document.getElementById('cadastro-empresa');
+    const ajuda = document.getElementById('ajuda-convenio');
+    if (!campo) return;
+
+    try {
+        const resposta = await fetch(`${API_BASE_URL}/empresas-convenio`);
+        const dados = await resposta.json();
+        const empresas = dados.empresas || [];
+
+        if (!empresas.length) {
+            campo.innerHTML = '<option value="">Nenhuma empresa conveniada no momento</option>';
+            if (ajuda) {
+                ajuda.innerHTML = '<strong>Ainda não há empresas com convênio ativo.</strong> ' +
+                    'Se você é taxista ou motorista de aplicativo, volte e escolha uma dessas ' +
+                    'opções. Se sua empresa tem interesse no convênio, peça para o RH falar ' +
+                    'com os postos CAJ e SKY.';
+            }
+            return;
+        }
+
+        campo.innerHTML = '<option value="">Selecione a sua empresa...</option>' +
+            empresas.map(e => `<option value="${e.id}">${e.nome}</option>`).join('');
+        empresasConvenioCarregadas = true;
+
+    } catch (erro) {
+        campo.innerHTML = '<option value="">Não consegui carregar a lista</option>';
+        if (ajuda) {
+            ajuda.textContent = 'Sem conexão para buscar as empresas conveniadas. ' +
+                'Verifique a internet e escolha a ocupação de novo.';
+        }
+    }
 }
 
 // ---------- placa ----------

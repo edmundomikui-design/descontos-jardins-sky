@@ -21,7 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname.includes('dashboard')) {
         verificarAutenticacao();
         mostrarPlacaAtual();
-        carregarProdutos().then(carregarCuponsAtivos);
+        // Cadastro em análise não vê lista de produtos: o botão "Gerar Cupom"
+        // só daria erro, e erro sem explicação parece app quebrado.
+        if (mostrarAvisoDeSituacao()) {
+            carregarProdutos().then(carregarCuponsAtivos);
+        }
     } else {
         setupLoginForm();
     }
@@ -29,6 +33,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const agora = new Date().toLocaleDateString('pt-BR');
     document.querySelectorAll('[id*="cupom-data"]').forEach(el => el.textContent = agora);
 });
+
+// ===== SITUAÇÃO DO CADASTRO =====
+//
+// Funcionário de empresa conveniada entra na fila da gerência antes de poder
+// gerar cupom. Devolve true quando o cadastro está liberado.
+
+function mostrarAvisoDeSituacao() {
+    const situacao = (localStorage.getItem('cliente_status') || 'ativo').toLowerCase();
+    if (situacao === 'ativo') return true;
+
+    const empresa = localStorage.getItem('cliente_empresa') || 'sua empresa';
+    const motivo = localStorage.getItem('cliente_motivo_recusa') || '';
+    const lista = document.getElementById('produtos-lista');
+    if (!lista) return false;
+
+    if (situacao === 'pendente') {
+        lista.innerHTML = `
+            <div style="padding:22px; text-align:center;">
+                <div style="font-size:40px; margin-bottom:10px;">⏳</div>
+                <h3 style="margin:0 0 10px; color:#e65100;">Cadastro em análise</h3>
+                <p style="color:#555; line-height:1.5; margin:0 0 12px;">
+                    A gerência está conferindo seu vínculo com a <strong>${empresa}</strong>.
+                    Assim que for aprovado, seus cupons ficam liberados aqui.
+                </p>
+                <p style="color:#888; font-size:13px; margin:0;">
+                    A análise costuma sair em 1 dia útil. Não precisa se cadastrar de novo.
+                </p>
+            </div>`;
+    } else {
+        lista.innerHTML = `
+            <div style="padding:22px; text-align:center;">
+                <div style="font-size:40px; margin-bottom:10px;">🚫</div>
+                <h3 style="margin:0 0 10px; color:#c62828;">Cadastro não liberado</h3>
+                <p style="color:#555; line-height:1.5; margin:0 0 12px;">
+                    ${motivo || 'Seu cadastro não foi aprovado pela gerência.'}
+                </p>
+                <p style="color:#888; font-size:13px; margin:0;">
+                    Se achar que houve engano, procure a gerência dos postos CAJ ou SKY.
+                </p>
+            </div>`;
+    }
+
+    const cupomCard = document.getElementById('cupom-card');
+    if (cupomCard) cupomCard.style.display = 'none';
+    return false;
+}
 
 // ===== CARRO EM USO =====
 // Motorista de aplicativo troca de carro toda hora. Se a placa fosse fixa no
@@ -128,9 +178,18 @@ function setupLoginForm() {
                 aceita_parceiros: document.getElementById('cadastro-parceiros').checked,
                 placa: document.getElementById('cadastro-placa').value,
                 registro_numero: document.getElementById('cadastro-registro').value,
-                empresa_convenio: document.getElementById('cadastro-empresa').value,
+                // A empresa agora é escolhida numa lista fechada: o campo
+                // guarda o id do convênio, não o nome digitado.
+                empresa_convenio_id: document.getElementById('cadastro-empresa').value || null,
                 foto_comprovante: comprovanteEmBase64
             };
+
+            if (dados.ocupacao === 'Outro' && !dados.empresa_convenio_id) {
+                mostrarAviso('Escolha a sua empresa na lista de convênios. Se ela não aparece, ' +
+                             'sua empresa ainda não tem convênio com os postos CAJ e SKY.');
+                return;
+            }
+
             await fazerCadastro(dados);
         });
     }
@@ -152,6 +211,9 @@ async function fazerLogin(email, senha) {
             localStorage.setItem('cliente_email', data.email);
             localStorage.setItem('cliente_placa', data.placa || '');
             localStorage.setItem('cliente_ocupacao', data.ocupacao || '');
+            localStorage.setItem('cliente_status', data.status || 'ativo');
+            localStorage.setItem('cliente_empresa', data.empresa_convenio || '');
+            localStorage.setItem('cliente_motivo_recusa', data.motivo_recusa || '');
             window.location.href = 'dashboard.html';
         } else {
             mostrarErro('login', data.erro || 'Erro ao fazer login');
@@ -192,13 +254,23 @@ async function fazerCadastro(dados) {
         const data = await response.json();
 
         if (response.ok) {
-            mostrarErro('cadastro', '✅ Cadastro realizado com sucesso! Faça login.', 'sucesso');
+            // Convênio de empresa não sai liberado na hora: quem confere o
+            // vínculo é a gerência. Dizer "cadastro realizado" e o cupom não
+            // sair depois seria pior do que avisar agora.
+            if (data.aguardando_aprovacao) {
+                mostrarErro('cadastro',
+                    '✅ Cadastro enviado para análise. A gerência vai conferir seu vínculo ' +
+                    'com a empresa e liberar seu acesso. Você já pode fazer login para ' +
+                    'acompanhar.', 'sucesso');
+            } else {
+                mostrarErro('cadastro', '✅ Cadastro realizado com sucesso! Faça login.', 'sucesso');
+            }
             document.getElementById('cadastro-form').reset();
             limparComprovante();
             document.getElementById('bloco-veiculo').style.display = 'none';
             setTimeout(() => {
                 toggleTab();
-            }, 1500);
+            }, data.aguardando_aprovacao ? 4000 : 1500);
         } else {
             mostrarErro('cadastro', data.erro || 'Erro ao cadastrar');
         }

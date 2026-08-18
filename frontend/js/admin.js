@@ -164,6 +164,202 @@ function trocarAba(nome) {
     if (nome === 'usuarios') carregarUsuarios();
     if (nome === 'caixa') carregarCaixa();
     if (nome === 'suspeitas') carregarSuspeitas();
+    if (nome === 'convenios') carregarConvenios();
+}
+
+// ===================== CONVÊNIOS COM EMPRESAS =====================
+//
+// A empresa deixou de ser texto livre no cadastro do cliente. Aqui a gerência
+// controla as duas travas: quem entra na lista (convênio assinado) e quem
+// passa da fila (vínculo conferido).
+
+function escapar(txt) {
+    return String(txt == null ? '' : txt)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function formatarCnpjCampo(valor) {
+    const n = String(valor || '').replace(/\D/g, '').slice(0, 14);
+    if (n.length <= 2) return n;
+    if (n.length <= 5) return `${n.slice(0,2)}.${n.slice(2)}`;
+    if (n.length <= 8) return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5)}`;
+    if (n.length <= 12) return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5,8)}/${n.slice(8)}`;
+    return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5,8)}/${n.slice(8,12)}-${n.slice(12)}`;
+}
+
+async function carregarConvenios() {
+    await Promise.all([carregarPendentes(), carregarEmpresas()]);
+}
+
+async function carregarPendentes() {
+    const alvo = document.getElementById('pendentes-conteudo');
+    try {
+        const d = await api('/admin/cadastros-pendentes');
+        atualizarSeloPendentes(d.total || 0);
+
+        if (!d.pendentes || !d.pendentes.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum cadastro aguardando. Tudo em dia.</p>';
+            return;
+        }
+
+        alvo.innerHTML = d.pendentes.map(p => {
+            const sinalEmail = p.email_corporativo
+                ? '<span style="color:#0ca30c;">✓ e-mail corporativo confere</span>'
+                : '<span style="color:#e65100;">⚠ e-mail não é o da empresa</span>';
+            const sinalFoto = p.tem_comprovante
+                ? `<button class="btn" onclick="verComprovante(${p.id})">Ver comprovante</button>`
+                : '<span style="color:#c62828;">sem comprovante</span>';
+
+            return `
+            <div class="card" style="margin-bottom:12px;">
+                <h4 style="margin:0 0 6px;">${escapar(p.nome)}</h4>
+                <p style="margin:2px 0; font-size:14px;">
+                    <strong>${escapar(p.empresa || '—')}</strong>
+                    ${p.empresa_cnpj ? ` · CNPJ ${escapar(p.empresa_cnpj)}` : ''}
+                </p>
+                <p style="margin:2px 0; font-size:13px; color:#555;">
+                    ${escapar(p.email)} · ${escapar(p.tel || '')} · placa ${escapar(p.placa || '—')}
+                </p>
+                <p style="margin:6px 0; font-size:13px;">${sinalEmail}</p>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+                    ${sinalFoto}
+                    <button class="btn btn-primary" onclick="decidirCadastro(${p.id}, 'aprovar', '${escapar(p.nome)}')">
+                        ✅ Aprovar
+                    </button>
+                    <button class="btn" style="background:#c62828; color:#fff;"
+                            onclick="decidirCadastro(${p.id}, 'recusar', '${escapar(p.nome)}')">
+                        ✖ Recusar
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+function atualizarSeloPendentes(total) {
+    const selo = document.getElementById('selo-pendentes');
+    if (!selo) return;
+    selo.textContent = total;
+    selo.hidden = !total;
+}
+
+async function decidirCadastro(clienteId, decisao, nome) {
+    let motivo = null;
+
+    if (decisao === 'recusar') {
+        motivo = prompt(`Por que o cadastro de ${nome} está sendo recusado?\n\n` +
+                        `A pessoa vai ver esse texto no aplicativo.`);
+        if (motivo === null) return;
+        if (!motivo.trim()) {
+            aviso('É preciso escrever o motivo da recusa.', 'erro');
+            return;
+        }
+    } else if (!confirm(`Aprovar o cadastro de ${nome}?\n\n` +
+                        `Ele passa a gerar cupons com desconto imediatamente.`)) {
+        return;
+    }
+
+    try {
+        const d = await api(`/admin/cadastros/${clienteId}/decidir`, {
+            method: 'POST',
+            body: JSON.stringify({ decisao, motivo })
+        });
+        aviso(d.mensagem);
+        carregarConvenios();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function cadastrarEmpresaConvenio() {
+    const nome = document.getElementById('empresa-nome').value.trim();
+    const cnpj = document.getElementById('empresa-cnpj').value.trim();
+    const dominio = document.getElementById('empresa-dominio').value.trim();
+    const limite = document.getElementById('empresa-limite').value;
+
+    if (nome.length < 3) return aviso('Informe o nome da empresa.', 'erro');
+    if (cnpj.replace(/\D/g, '').length !== 14) return aviso('CNPJ precisa ter 14 números.', 'erro');
+
+    try {
+        const d = await api('/admin/empresas-convenio', {
+            method: 'POST',
+            body: JSON.stringify({
+                nome, cnpj,
+                dominio_email: dominio || null,
+                limite_funcionarios: Number(limite) || 0
+            })
+        });
+        aviso(d.mensagem);
+        ['empresa-nome', 'empresa-cnpj', 'empresa-dominio'].forEach(
+            id => document.getElementById(id).value = '');
+        document.getElementById('empresa-limite').value = 0;
+        carregarEmpresas();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function carregarEmpresas() {
+    const alvo = document.getElementById('empresas-conteudo');
+    try {
+        const d = await api('/admin/empresas-convenio');
+
+        if (!d.empresas || !d.empresas.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhuma empresa cadastrada. ' +
+                'Enquanto não houver, a opção "Outro — convênio" não lista nada no aplicativo.</p>';
+            return;
+        }
+
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Empresa</th><th>CNPJ</th><th>E-mail exigido</th>
+                        <th>Aprovados</th><th>Na fila</th><th>Limite</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.empresas.map(e => `
+                        <tr style="${e.ativo ? '' : 'opacity:.5;'}">
+                            <td>${escapar(e.nome)}${e.ativo ? '' : ' <small>(encerrado)</small>'}</td>
+                            <td>${escapar(e.cnpj)}</td>
+                            <td>${e.dominio_email ? '@' + escapar(e.dominio_email) : '—'}</td>
+                            <td>${e.aprovados}</td>
+                            <td>${e.pendentes}</td>
+                            <td>${e.limite_funcionarios || 'sem teto'}</td>
+                            <td>
+                                <button class="btn" onclick="alternarConvenio(${e.id}, ${e.ativo ? 0 : 1}, '${escapar(e.nome)}')">
+                                    ${e.ativo ? 'Encerrar' : 'Reativar'}
+                                </button>
+                            </td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+async function alternarConvenio(empresaId, ativo, nome) {
+    const acao = ativo ? 'reativar' : 'encerrar';
+    if (!confirm(`Deseja ${acao} o convênio da ${nome}?\n\n` +
+                 (ativo ? 'Ela volta a aparecer no cadastro do aplicativo.'
+                        : 'Ela some do cadastro do aplicativo. Quem já está aprovado continua usando.'))) {
+        return;
+    }
+    try {
+        const d = await api(`/admin/empresas-convenio/${empresaId}`, {
+            method: 'POST',
+            body: JSON.stringify({ ativo })
+        });
+        aviso(d.mensagem);
+        carregarEmpresas();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
 }
 
 // ===================== FECHAMENTO DE CAIXA =====================
