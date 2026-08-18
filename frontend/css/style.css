@@ -802,3 +802,20 @@ html, body {
 .msg-placa { font-size: 13px; margin-top: 8px; }
 .msg-placa.ok { color: #15803d; }
 .msg-placa.erro { color: #b91c1c; }
+
+/* Selo com o número de cadastros esperando liberação na aba Convênios.
+   Fica na aba porque a fila só é útil se alguém lembrar de olhar. */
+.selo-pendentes {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    margin-left: 4px;
+    border-radius: 10px;
+    background: #c62828;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    vertical-align: middle;
+}
