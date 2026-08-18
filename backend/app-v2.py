@@ -77,6 +77,44 @@ DESCRICAO_COMPROVANTE = {
 LIMITE_FOTO_BASE64 = 1_400_000
 
 
+def normalizar_cnpj(cnpj):
+    """Devolve o CNPJ só com números, ou None."""
+    if not cnpj:
+        return None
+    limpo = re.sub(r'\D', '', str(cnpj))
+    return limpo or None
+
+
+def validar_cnpj(cnpj):
+    """
+    Confere os dois dígitos verificadores do CNPJ.
+
+    Isso pega erro de digitação, não fraude: qualquer um acha o CNPJ real de
+    qualquer empresa em segundos. A trava de verdade é a empresa precisar
+    estar cadastrada aqui pela gerência (convênio assinado).
+    """
+    n = normalizar_cnpj(cnpj)
+    if not n or len(n) != 14 or n == n[0] * 14:
+        return False
+
+    def digito(base, pesos):
+        soma = sum(int(d) * p for d, p in zip(base, pesos))
+        resto = soma % 11
+        return '0' if resto < 2 else str(11 - resto)
+
+    d1 = digito(n[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    d2 = digito(n[:13], [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return n[12:] == d1 + d2
+
+
+def formatar_cnpj(cnpj):
+    """00.000.000/0000-00 para exibição."""
+    n = normalizar_cnpj(cnpj)
+    if not n or len(n) != 14:
+        return cnpj
+    return f'{n[:2]}.{n[2:5]}.{n[5:8]}/{n[8:12]}-{n[12:]}'
+
+
 def normalizar_placa(placa):
     """Devolve a placa só com letras e números, em maiúsculas, ou None."""
     if not placa:
@@ -326,6 +364,7 @@ def cadastro():
         tipo_comprovante = perfil['comprovante'] if perfil else 'convenio'
         registro_numero = re.sub(r'[^A-Za-z0-9]', '', str(data.get('registro_numero') or '')).upper()
         empresa_convenio = (data.get('empresa_convenio') or '').strip() or None
+        empresa_convenio_id = data.get('empresa_convenio_id')
 
         # A placa é a conferência da bomba, então vale para todo mundo.
         # Quem troca de carro atualiza depois, em dois toques.
@@ -341,16 +380,76 @@ def cadastro():
         if erro_foto:
             return jsonify({'erro': erro_foto}), 400
 
-        if registro_tipo == 'convenio' and not empresa_convenio:
-            return jsonify({
-                'erro': 'Informe a empresa do convênio. '
-                        'Sem convênio ativo, escolha Táxi ou Motorista de aplicativo.'
-            }), 400
-
         cpf = re.sub(r'\D', '', data.get('cpf'))
 
         conn = get_db()
         cursor = conn.cursor()
+
+        # ---- convênio de empresa: só da lista, e sempre com análise ----
+        #
+        # Táxi e motorista de aplicativo continuam liberados na hora. Convênio
+        # não: a empresa precisa ter contrato assinado (cadastrada pela
+        # gerência) e o cadastro fica pendente até alguém de alçada aprovar.
+        status_inicial = 'ativo'
+        empresa = None
+
+        if registro_tipo == 'convenio':
+            if not empresa_convenio_id:
+                conn.close()
+                return jsonify({
+                    'erro': 'Escolha a empresa do convênio na lista. '
+                            'Se a sua empresa não aparece, ela ainda não tem convênio '
+                            'com os postos CAJ e SKY — fale com o RH dela.'
+                }), 400
+
+            cursor.execute(
+                'SELECT id, nome, cnpj, dominio_email, limite_funcionarios, ativo '
+                'FROM empresas_convenio WHERE id = ?',
+                (empresa_convenio_id,)
+            )
+            empresa = cursor.fetchone()
+
+            if not empresa or not empresa['ativo']:
+                conn.close()
+                return jsonify({
+                    'erro': 'Essa empresa não tem convênio ativo com os postos CAJ e SKY.'
+                }), 400
+
+            # Se a empresa informou o domínio do e-mail corporativo, ele passa
+            # a ser exigido: é a prova mais barata de que a pessoa trabalha lá.
+            dominio = (empresa['dominio_email'] or '').strip().lower().lstrip('@')
+            if dominio:
+                email_informado = (data.get('email') or '').strip().lower()
+                if not email_informado.endswith('@' + dominio):
+                    conn.close()
+                    return jsonify({
+                        'erro': f'Para o convênio da {empresa["nome"]} é preciso usar o '
+                                f'e-mail corporativo (@{dominio}).'
+                    }), 400
+
+            # Teto de funcionários combinado com o RH: mesmo que alguém burle
+            # tudo, o estrago para no número contratado.
+            limite = empresa['limite_funcionarios'] or 0
+            if limite > 0:
+                cursor.execute(
+                    "SELECT COUNT(*) AS n FROM clientes "
+                    "WHERE empresa_convenio_id = ? AND status <> 'recusado'",
+                    (empresa['id'],)
+                )
+                linha_lim = cursor.fetchone()
+                if (linha_lim['n'] if linha_lim else 0) >= limite:
+                    conn.close()
+                    return jsonify({
+                        'erro': f'O convênio da {empresa["nome"]} já atingiu o limite de '
+                                f'{limite} funcionários. Fale com o RH da empresa.'
+                    }), 400
+
+            empresa_convenio = empresa['nome']
+            empresa_convenio_id = empresa['id']
+            status_inicial = 'pendente'
+        else:
+            # Táxi/Uber não carregam vínculo de empresa.
+            empresa_convenio_id = None
 
         cursor.execute('SELECT id FROM clientes WHERE cpf = ?', (cpf,))
         if cursor.fetchone():
@@ -376,8 +475,9 @@ def cadastro():
             (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo, desconto_valor,
              aceita_promocoes, data_consentimento, aceita_parceiros, data_consentimento_parceiros,
              placa, data_placa, registro_tipo, registro_numero, empresa_convenio,
-             foto_comprovante, foto_comprovante_tipo, data_foto_comprovante)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             foto_comprovante, foto_comprovante_tipo, data_foto_comprovante,
+             empresa_convenio_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cpf,
             data.get('nome'),
@@ -399,18 +499,29 @@ def cadastro():
             empresa_convenio,
             foto_comprovante,
             tipo_comprovante,
-            agora_iso
+            agora_iso,
+            empresa_convenio_id,
+            status_inicial
         ))
 
         conn.commit()
         cliente_id = cursor.lastrowid
         conn.close()
 
+        if status_inicial == 'pendente':
+            mensagem = (f'Cadastro enviado para análise. Assim que a gerência confirmar '
+                        f'seu vínculo com a {empresa_convenio}, você poderá gerar cupons. '
+                        f'Você receberá um aviso.')
+        else:
+            mensagem = 'Cadastro realizado! Confirme seu email.'
+
         return jsonify({
-            'mensagem': 'Cadastro realizado! Confirme seu email.',
+            'mensagem': mensagem,
             'cliente_id': cliente_id,
             'placa': placa,
-            'placa_ja_cadastrada': placa_repetida
+            'placa_ja_cadastrada': placa_repetida,
+            'status': status_inicial,
+            'aguardando_aprovacao': status_inicial == 'pendente'
         }), 201
 
     except Exception as e:
@@ -428,7 +539,8 @@ def login():
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT id, nome, email, senha_hash, placa, ocupacao
+            SELECT id, nome, email, senha_hash, placa, ocupacao,
+                   status, motivo_recusa, empresa_convenio
             FROM clientes WHERE email = ?
         ''', (email,))
         cliente = cursor.fetchone()
@@ -437,12 +549,20 @@ def login():
         if not cliente or not check_password_hash(cliente['senha_hash'], senha):
             return jsonify({'erro': 'Email ou senha incorretos'}), 401
 
+        # O login continua funcionando com cadastro pendente de propósito: a
+        # pessoa precisa conseguir entrar para acompanhar a análise. O que não
+        # sai é o cupom.
+        situacao = (cliente['status'] or 'ativo').lower()
+
         return jsonify({
             'cliente_id': cliente['id'],
             'nome': cliente['nome'],
             'email': cliente['email'],
             'placa': cliente['placa'],
             'ocupacao': cliente['ocupacao'],
+            'status': situacao,
+            'empresa_convenio': cliente['empresa_convenio'],
+            'motivo_recusa': cliente['motivo_recusa'],
             'mensagem': 'Login realizado com sucesso'
         }), 200
 
@@ -588,7 +708,7 @@ def gerar_cupom():
 
         # Verifica cliente
         cursor.execute('''
-            SELECT id, nome, desconto_tipo, desconto_valor
+            SELECT id, nome, desconto_tipo, desconto_valor, status, motivo_recusa
             FROM clientes
             WHERE id = ?
         ''', (cliente_id,))
@@ -596,6 +716,25 @@ def gerar_cupom():
 
         if not cliente:
             return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        # A alçada só vale se travar aqui: sem isto o cadastro de convênio
+        # ficaria "pendente" no painel e mesmo assim saía abastecendo com
+        # desconto — a aprovação viraria enfeite.
+        situacao = (cliente['status'] or 'ativo').lower()
+        if situacao == 'pendente':
+            conn.close()
+            return jsonify({
+                'erro': 'Seu cadastro ainda está em análise pela gerência. '
+                        'Assim que for aprovado você poderá gerar cupons.',
+                'status': 'pendente'
+            }), 403
+        if situacao in ('recusado', 'bloqueado', 'inativo'):
+            motivo = cliente['motivo_recusa'] or 'Fale com a gerência dos postos.'
+            conn.close()
+            return jsonify({
+                'erro': f'Seu cadastro não está liberado. {motivo}',
+                'status': situacao
+            }), 403
 
         # Verifica produto (preço, desconto e limite vêm da tela de administrador)
         cursor.execute('''
@@ -1977,6 +2116,278 @@ def admin_comprovante(cliente_id):
             'imagem': c['foto_comprovante']
         }), 200
 
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==========================================================================
+# CONVÊNIO COM EMPRESAS — lista fechada + alçada de liberação
+# ==========================================================================
+
+@app.route('/api/empresas-convenio', methods=['GET'])
+def listar_empresas_convenio_publico():
+    """
+    Lista para o menu do cadastro. Público de propósito — quem vai se
+    cadastrar ainda não tem login.
+
+    Devolve só id e nome: CNPJ, domínio e limite são informação interna e não
+    servem de nada para quem está preenchendo o formulário.
+    """
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id, nome FROM empresas_convenio WHERE ativo = 1 ORDER BY nome'
+        )
+        empresas = [{'id': e['id'], 'nome': e['nome']} for e in cursor.fetchall()]
+        conn.close()
+        return jsonify({'empresas': empresas}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/empresas-convenio', methods=['GET'])
+@exige_gerencia
+def admin_listar_empresas_convenio():
+    """Empresas conveniadas, com quantos funcionários já se cadastraram."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT e.id, e.nome, e.cnpj, e.dominio_email, e.limite_funcionarios,
+                   e.ativo, e.observacao, e.criado_por, e.data_criacao,
+                   (SELECT COUNT(*) FROM clientes c
+                     WHERE c.empresa_convenio_id = e.id AND c.status = 'ativo') AS aprovados,
+                   (SELECT COUNT(*) FROM clientes c
+                     WHERE c.empresa_convenio_id = e.id AND c.status = 'pendente') AS pendentes
+            FROM empresas_convenio e
+            ORDER BY e.ativo DESC, e.nome
+        ''')
+        empresas = []
+        for e in cursor.fetchall():
+            empresas.append({
+                'id': e['id'],
+                'nome': e['nome'],
+                'cnpj': formatar_cnpj(e['cnpj']),
+                'dominio_email': e['dominio_email'],
+                'limite_funcionarios': e['limite_funcionarios'] or 0,
+                'ativo': bool(e['ativo']),
+                'observacao': e['observacao'],
+                'criado_por': e['criado_por'],
+                'data_criacao': e['data_criacao'],
+                'aprovados': e['aprovados'] or 0,
+                'pendentes': e['pendentes'] or 0
+            })
+        conn.close()
+        return jsonify({'empresas': empresas}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/empresas-convenio', methods=['POST'])
+@exige_gerencia
+def admin_criar_empresa_convenio():
+    """Cadastra uma empresa que assinou convênio."""
+    try:
+        data = request.get_json() or {}
+        nome = (data.get('nome') or '').strip()
+        cnpj = normalizar_cnpj(data.get('cnpj'))
+        dominio = (data.get('dominio_email') or '').strip().lower().lstrip('@') or None
+
+        try:
+            limite = int(data.get('limite_funcionarios') or 0)
+        except (TypeError, ValueError):
+            limite = 0
+        if limite < 0:
+            limite = 0
+
+        if len(nome) < 3:
+            return jsonify({'erro': 'Informe o nome da empresa.'}), 400
+        if not validar_cnpj(cnpj):
+            return jsonify({'erro': 'CNPJ inválido. Confira os números.'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id, nome FROM empresas_convenio WHERE cnpj = ?', (cnpj,))
+        ja = cursor.fetchone()
+        if ja:
+            conn.close()
+            return jsonify({'erro': f'Esse CNPJ já está cadastrado como "{ja["nome"]}".'}), 400
+
+        cursor.execute('''
+            INSERT INTO empresas_convenio
+            (nome, cnpj, dominio_email, limite_funcionarios, ativo, observacao, criado_por)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
+        ''', (nome, cnpj, dominio, limite,
+              (data.get('observacao') or '').strip() or None,
+              request.admin['usuario']))
+
+        empresa_id = cursor.lastrowid
+        registrar_auditoria(
+            cursor, request.admin, 'convenio_empresa_criada',
+            campo='empresa', valor_novo=nome,
+            detalhe=f'CNPJ {formatar_cnpj(cnpj)} | limite {limite or "sem limite"}'
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({'mensagem': f'Convênio da {nome} cadastrado.',
+                        'empresa_id': empresa_id}), 201
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/empresas-convenio/<int:empresa_id>', methods=['POST'])
+@exige_gerencia
+def admin_alterar_empresa_convenio(empresa_id):
+    """Ativa/desativa o convênio ou ajusta limite e domínio."""
+    try:
+        data = request.get_json() or {}
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id, nome, ativo FROM empresas_convenio WHERE id = ?',
+                       (empresa_id,))
+        empresa = cursor.fetchone()
+        if not empresa:
+            conn.close()
+            return jsonify({'erro': 'Empresa não encontrada'}), 404
+
+        if 'ativo' in data:
+            novo = 1 if data['ativo'] in (True, 1, '1', 'true') else 0
+            cursor.execute('UPDATE empresas_convenio SET ativo = ? WHERE id = ?',
+                           (novo, empresa_id))
+            registrar_auditoria(
+                cursor, request.admin,
+                'convenio_ativado' if novo else 'convenio_encerrado',
+                campo='empresa', valor_anterior=empresa['nome'],
+                detalhe='Convênio ' + ('reativado' if novo else 'encerrado')
+            )
+
+        if 'limite_funcionarios' in data:
+            try:
+                limite = max(0, int(data['limite_funcionarios'] or 0))
+            except (TypeError, ValueError):
+                limite = 0
+            cursor.execute(
+                'UPDATE empresas_convenio SET limite_funcionarios = ? WHERE id = ?',
+                (limite, empresa_id))
+
+        if 'dominio_email' in data:
+            dom = (data['dominio_email'] or '').strip().lower().lstrip('@') or None
+            cursor.execute('UPDATE empresas_convenio SET dominio_email = ? WHERE id = ?',
+                           (dom, empresa_id))
+
+        conn.commit()
+        conn.close()
+        return jsonify({'mensagem': 'Convênio atualizado.'}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/cadastros-pendentes', methods=['GET'])
+@exige_gerencia
+def admin_cadastros_pendentes():
+    """Fila de cadastros de convênio aguardando liberação."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT c.id, c.nome, c.cpf, c.email, c.tel, c.ocupacao, c.placa,
+                   c.empresa_convenio, c.empresa_convenio_id, c.data_criacao,
+                   c.foto_comprovante_tipo,
+                   e.nome AS empresa_nome, e.cnpj AS empresa_cnpj,
+                   e.dominio_email AS empresa_dominio
+            FROM clientes c
+            LEFT JOIN empresas_convenio e ON e.id = c.empresa_convenio_id
+            WHERE c.status = 'pendente'
+            ORDER BY c.data_criacao
+        ''')
+
+        pendentes = []
+        for c in cursor.fetchall():
+            email = (c['email'] or '').lower()
+            dominio = (c['empresa_dominio'] or '').strip().lower().lstrip('@')
+            pendentes.append({
+                'id': c['id'],
+                'nome': c['nome'],
+                'cpf': c['cpf'],
+                'email': c['email'],
+                'tel': c['tel'],
+                'placa': c['placa'],
+                'empresa': c['empresa_nome'] or c['empresa_convenio'],
+                'empresa_cnpj': formatar_cnpj(c['empresa_cnpj']) if c['empresa_cnpj'] else None,
+                'cadastrado_em': c['data_criacao'],
+                'tem_comprovante': bool(c['foto_comprovante_tipo']),
+                # Sinal de apoio para a decisão, não veredito automático.
+                'email_corporativo': bool(dominio and email.endswith('@' + dominio))
+            })
+        conn.close()
+        return jsonify({'pendentes': pendentes, 'total': len(pendentes)}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/cadastros/<int:cliente_id>/decidir', methods=['POST'])
+@exige_gerencia
+def admin_decidir_cadastro(cliente_id):
+    """
+    Aprova ou recusa um cadastro pendente. Fica tudo na auditoria: quem
+    liberou, quando e por quê.
+    """
+    try:
+        data = request.get_json() or {}
+        decisao = (data.get('decisao') or '').strip().lower()
+        motivo = (data.get('motivo') or '').strip() or None
+
+        if decisao not in ('aprovar', 'recusar'):
+            return jsonify({'erro': "Decisão deve ser 'aprovar' ou 'recusar'."}), 400
+        if decisao == 'recusar' and not motivo:
+            return jsonify({'erro': 'Escreva o motivo da recusa.'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            'SELECT id, nome, status, empresa_convenio FROM clientes WHERE id = ?',
+            (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        if (cliente['status'] or '').lower() != 'pendente':
+            conn.close()
+            return jsonify({
+                'erro': f'Esse cadastro já foi analisado (situação atual: {cliente["status"]}).'
+            }), 400
+
+        novo_status = 'ativo' if decisao == 'aprovar' else 'recusado'
+        agora_iso = datetime.now().isoformat()
+
+        cursor.execute('''
+            UPDATE clientes
+            SET status = ?, aprovado_por = ?, data_aprovacao = ?, motivo_recusa = ?
+            WHERE id = ?
+        ''', (novo_status, request.admin['usuario'], agora_iso, motivo, cliente_id))
+
+        registrar_auditoria(
+            cursor, request.admin,
+            'cadastro_aprovado' if decisao == 'aprovar' else 'cadastro_recusado',
+            campo='cliente', valor_anterior='pendente', valor_novo=novo_status,
+            detalhe=f'{cliente["nome"]} — convênio {cliente["empresa_convenio"] or "—"}'
+                    + (f' | motivo: {motivo}' if motivo else '')
+        )
+
+        conn.commit()
+        conn.close()
+
+        if decisao == 'aprovar':
+            return jsonify({'mensagem': f'{cliente["nome"]} liberado. Já pode gerar cupons.',
+                            'status': novo_status}), 200
+        return jsonify({'mensagem': f'Cadastro de {cliente["nome"]} recusado.',
+                        'status': novo_status}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 

@@ -256,6 +256,25 @@ def _schema(pg):
             ativo INTEGER DEFAULT 1,
             data_criacao TIMESTAMP DEFAULT {agora}
         )''',
+
+        # Empresas que assinaram convênio com os postos.
+        #
+        # Existe para inverter o ônus da prova: antes o funcionário digitava o
+        # nome da empresa e ninguém conferia nada — bastava escrever "Itaú".
+        # Agora a gerência cadastra quem de fato fechou contrato, e o
+        # funcionário só escolhe de uma lista. Sem convênio assinado, a empresa
+        # nem aparece na tela de cadastro.
+        f'''CREATE TABLE IF NOT EXISTS empresas_convenio (
+            id {serial},
+            nome TEXT NOT NULL,
+            cnpj TEXT UNIQUE NOT NULL,
+            dominio_email TEXT,
+            limite_funcionarios INTEGER DEFAULT 0,
+            ativo INTEGER DEFAULT 1,
+            observacao TEXT,
+            criado_por TEXT,
+            data_criacao TIMESTAMP DEFAULT {agora}
+        )''',
     ]
 
 
@@ -296,6 +315,16 @@ COLUNAS_NOVAS = {
         ('foto_comprovante', 'TEXT', 'TEXT'),
         ('foto_comprovante_tipo', 'TEXT', 'TEXT'),
         ('data_foto_comprovante', 'TEXT', 'TEXT'),
+        # Convênio de empresa: liga o cliente à empresa cadastrada pela
+        # gerência (empresas_convenio.id). O campo antigo empresa_convenio
+        # continua guardando o nome por escrito, para não perder histórico
+        # de quem se cadastrou antes desta trava existir.
+        ('empresa_convenio_id', 'INTEGER', 'INTEGER'),
+        # Alçada de liberação. Cliente de convênio nasce 'pendente' e não
+        # emite cupom até gerência ou master aprovar.
+        ('aprovado_por', 'TEXT', 'TEXT'),
+        ('data_aprovacao', 'TEXT', 'TEXT'),
+        ('motivo_recusa', 'TEXT', 'TEXT'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
