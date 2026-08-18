@@ -432,11 +432,56 @@ function verCupom(produtoId) {
     mostrarCupomGerado(cupom);
 }
 
+// Detecta iPhone/iPad. O Safari no iOS ignora o atributo "download" dos
+// links (sempre ignorou — não é bug nosso), e isso piora quando o app está
+// instalado na tela de início (modo standalone, sem barra de navegador para
+// abrir uma nova aba). Por isso o iPhone tem um caminho de salvar diferente,
+// abaixo.
+function ehIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+// No iPhone o único jeito 100% confiável de salvar uma imagem é o usuário
+// apertar e segurar nela e escolher "Salvar Imagem" — isso é um gesto do
+// próprio iOS, funciona em qualquer versão e dentro do app instalado.
+// Então em vez de tentar forçar um download (que o Safari ignora), mostramos
+// a imagem grande em tela cheia com essa instrução.
+function mostrarQRParaSalvarIOS(srcImagem) {
+    if (document.getElementById('overlay-salvar-qr')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'overlay-salvar-qr';
+    overlay.style.cssText = `
+        position: fixed; inset: 0; z-index: 99999;
+        background: rgba(0,0,0,0.92);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        padding: 24px; text-align: center;
+    `;
+    overlay.innerHTML = `
+        <p style="color:#fff; font-size:16px; font-weight:600; margin-bottom:16px; max-width:320px;">
+            Toque e segure a imagem abaixo e escolha "Salvar Imagem"
+        </p>
+        <img src="${srcImagem}" alt="QR Code para salvar"
+             style="width:260px; height:260px; border-radius:12px; background:#fff; padding:12px;">
+        <button id="fechar-overlay-qr" style="margin-top:24px; padding:12px 28px; border:none; border-radius:10px; background:#fff; color:#111; font-weight:700; font-size:15px;">
+            Fechar
+        </button>
+    `;
+    document.body.appendChild(overlay);
+    document.getElementById('fechar-overlay-qr').addEventListener('click', () => overlay.remove());
+}
+
 // Salva a imagem do QR code na galeria/downloads do celular
 function salvarQRCode() {
     const img = document.getElementById('qrcode-img');
     if (!img || !img.src) {
         mostrarAviso('Nenhum cupom aberto para salvar.');
+        return;
+    }
+
+    if (ehIOS()) {
+        mostrarQRParaSalvarIOS(img.src);
         return;
     }
 
@@ -454,7 +499,8 @@ function salvarQRCode() {
 
 // Compartilha o QR code por WhatsApp (ou qualquer app) usando o menu nativo
 // de compartilhamento do celular. Se o celular não suportar compartilhar
-// imagem direto, salva o arquivo e avisa o cliente para anexar manualmente.
+// imagem direto, cai no caminho de salvar (que já trata iPhone à parte) e
+// avisa o cliente para anexar manualmente.
 async function compartilharQRCode() {
     const img = document.getElementById('qrcode-img');
     if (!img || !img.src) {
@@ -479,10 +525,14 @@ async function compartilharQRCode() {
                 text: 'Aqui está meu QR code de desconto CAJ SKY'
             });
         } else {
-            // Celular não permite compartilhar arquivo direto (ex.: iPhone
-            // mais antigo ou navegador não suportado): salva e orienta.
+            // Celular não permite compartilhar arquivo direto (comum no
+            // iPhone quando o app está instalado na tela de início).
             salvarQRCode();
-            mostrarAviso('Seu celular não permite enviar a imagem direto pelo WhatsApp. Salvei o QR code — agora é só abrir o WhatsApp e anexar a imagem salva.');
+            if (ehIOS()) {
+                mostrarAviso('Toque e segure a imagem que apareceu na tela para salvá-la. Depois é só abrir o WhatsApp e anexar a foto salva.');
+            } else {
+                mostrarAviso('Seu celular não permite enviar a imagem direto pelo WhatsApp. Salvei o QR code — agora é só abrir o WhatsApp e anexar a imagem salva.');
+            }
         }
     } catch (erro) {
         if (erro.name !== 'AbortError') {
