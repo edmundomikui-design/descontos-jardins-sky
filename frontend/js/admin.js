@@ -165,6 +165,285 @@ function trocarAba(nome) {
     if (nome === 'caixa') carregarCaixa();
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
+    if (nome === 'cupons') abrirCuponsDoDia();
+    else pararAutoCupons();   // não fica batendo na API numa aba que ninguém vê
+}
+
+// ===================== CUPONS DO DIA (tela do caixa) =====================
+//
+// Fica aberta o dia todo no guichê. Duas funções: ler o cupom do motorista e
+// dar baixa, e mostrar o movimento do dia.
+//
+// A trava contra reuso NÃO está aqui — está no saldo gravado no banco, que o
+// /api/cupom/usar confere a cada baixa. Esta tela é para enxergar e agir
+// rápido, não para vigiar.
+
+let cuponsDoDia = [];
+let timerCupons = null;
+let cupomAberto = null;
+
+function abrirCuponsDoDia() {
+    const campoData = document.getElementById('cupons-data');
+    if (campoData && !campoData.value) {
+        campoData.value = new Date().toISOString().slice(0, 10);
+    }
+    carregarCuponsDoDia();
+    alternarAutoCupons();
+    focarLeitura();
+}
+
+function focarLeitura() {
+    const campo = document.getElementById('cupom-codigo');
+    if (campo) { campo.focus(); campo.select(); }
+}
+
+function pararAutoCupons() {
+    if (timerCupons) { clearInterval(timerCupons); timerCupons = null; }
+}
+
+function alternarAutoCupons() {
+    pararAutoCupons();
+    const ligado = document.getElementById('cupons-auto');
+    const abaAtiva = document.getElementById('aba-cupons');
+    if (ligado && ligado.checked && abaAtiva && abaAtiva.style.display !== 'none') {
+        // 20s: rápido o bastante para o caixa acompanhar, devagar o bastante
+        // para não castigar o servidor no plano gratuito.
+        timerCupons = setInterval(() => carregarCuponsDoDia(true), 20000);
+    }
+}
+
+async function carregarCuponsDoDia(silencioso = false) {
+    const dia = document.getElementById('cupons-data').value ||
+                new Date().toISOString().slice(0, 10);
+    const alvo = document.getElementById('cupons-conteudo');
+
+    try {
+        const d = await api(`/admin/cupons-do-dia?data=${encodeURIComponent(dia)}`);
+        cuponsDoDia = d.cupons || [];
+        renderizarResumoCupons(d.resumo || {});
+        renderizarCuponsDoDia();
+
+        const agora = new Date();
+        document.getElementById('cupons-atualizado').textContent =
+            'Atualizado às ' + String(agora.getHours()).padStart(2, '0') + ':' +
+            String(agora.getMinutes()).padStart(2, '0') + ':' +
+            String(agora.getSeconds()).padStart(2, '0');
+    } catch (e) {
+        if (!silencioso) alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+function renderizarResumoCupons(r) {
+    document.getElementById('cupons-resumo').innerHTML = `
+        <div class="tile"><span class="rotulo">Cupons gerados</span><strong>${r.total || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Sem uso</span><strong>${r.emitidos || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Parciais</span><strong>${r.parciais || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Esgotados</span><strong>${r.esgotados || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Litros abastecidos</span><strong>${(r.litros_abastecidos || 0).toFixed(2)}</strong></div>
+        <div class="tile"><span class="rotulo">Desconto concedido</span><strong>R$ ${(r.desconto_concedido || 0).toFixed(2)}</strong></div>`;
+}
+
+const ROTULO_SITUACAO = {
+    emitido:  { texto: 'Sem uso',  cor: '#546e7a' },
+    parcial:  { texto: 'Parcial',  cor: '#ef6c00' },
+    esgotado: { texto: 'Esgotado', cor: '#2e7d32' }
+};
+
+function renderizarCuponsDoDia() {
+    const alvo = document.getElementById('cupons-conteudo');
+    const filtro = document.getElementById('cupons-filtro').value;
+    const busca = (document.getElementById('cupons-busca').value || '').trim().toLowerCase();
+
+    let lista = cuponsDoDia;
+    if (filtro) lista = lista.filter(c => c.situacao === filtro);
+    if (busca) {
+        lista = lista.filter(c =>
+            (c.cliente_nome || '').toLowerCase().includes(busca) ||
+            (c.placa || '').toLowerCase().includes(busca) ||
+            (c.codigo || '').toLowerCase().includes(busca));
+    }
+
+    if (!lista.length) {
+        alvo.innerHTML = '<p class="vazio">' +
+            (cuponsDoDia.length ? 'Nenhum cupom com esse filtro.'
+                                : 'Nenhum cupom gerado neste dia ainda.') + '</p>';
+        return;
+    }
+
+    alvo.innerHTML = `
+        <table class="tabela">
+            <thead>
+                <tr>
+                    <th>Situação</th><th>Motorista</th><th>Placa</th><th>Produto</th>
+                    <th>Usado</th><th>Saldo</th><th>Último uso</th><th>Código</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${lista.map(c => {
+                    const s = ROTULO_SITUACAO[c.situacao] || ROTULO_SITUACAO.emitido;
+                    const postos = c.postos && c.postos.length ? c.postos.join(', ') : '';
+                    const ultimo = c.ultima_hora
+                        ? `${escapar(c.ultima_hora)}${postos ? ' · ' + escapar(postos) : ''}`
+                        : '—';
+                    return `
+                    <tr>
+                        <td><span class="badge" style="background:${s.cor}; color:#fff;">${s.texto}</span></td>
+                        <td>${escapar(c.cliente_nome || '—')}
+                            ${c.empresa_convenio ? `<br><small>${escapar(c.empresa_convenio)}</small>` : ''}</td>
+                        <td>${escapar(c.placa || '—')}</td>
+                        <td>${escapar((c.produto_icone || '') + ' ' + (c.produto_nome || '—'))}</td>
+                        <td>${c.quantidade_utilizada.toFixed(2)} ${escapar(c.unidade)}</td>
+                        <td><strong>${c.situacao === 'esgotado'
+                            ? '—'
+                            : c.quantidade_restante.toFixed(2) + ' ' + escapar(c.unidade)}</strong></td>
+                        <td>${ultimo}</td>
+                        <td><code style="font-size:11px;">${escapar(c.codigo)}</code></td>
+                        <td>${c.situacao !== 'esgotado'
+                            ? `<button class="btn" onclick="consultarCodigo('${escapar(c.codigo)}')">Dar baixa</button>`
+                            : ''}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+}
+
+// ---------- leitura e baixa ----------
+
+function lerCupomCaixa(evento) {
+    evento.preventDefault();
+    const codigo = document.getElementById('cupom-codigo').value.trim();
+    if (!codigo) {
+        document.getElementById('cupom-leitura-erro').textContent = 'Digite ou leia o código.';
+        return false;
+    }
+    consultarCodigo(codigo);
+    return false;
+}
+
+async function consultarCodigo(codigo) {
+    document.getElementById('cupom-leitura-erro').textContent = '';
+    document.getElementById('baixa-erro').textContent = '';
+
+    try {
+        const c = await api('/cupom/consultar?qrcode=' + encodeURIComponent(codigo));
+        cupomAberto = c;
+        document.getElementById('cupom-codigo').value = '';
+        exibirCupomCaixa(c);
+    } catch (e) {
+        cupomAberto = null;
+        document.getElementById('card-cupom-aberto').style.display = 'none';
+        document.getElementById('cupom-leitura-erro').textContent = e.message;
+        focarLeitura();
+    }
+}
+
+function exibirCupomCaixa(c) {
+    const card = document.getElementById('card-cupom-aberto');
+    const faixa = document.getElementById('cupom-faixa');
+    const bloco = document.getElementById('bloco-baixa');
+    card.style.display = 'block';
+
+    const alertaPlaca = c.placa_em_varios_cadastros
+        ? `<p style="color:#c62828; margin:8px 0;">⚠ Esta placa está em ${c.placa_qtd_cadastros}
+             cadastros. Pode ser táxi dividido por turno — confira o motorista.</p>`
+        : '';
+
+    document.getElementById('cupom-detalhe').innerHTML = `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-top:10px;">
+            <div><small>Motorista</small><br><strong>${escapar(c.cliente_nome || '—')}</strong></div>
+            <div><small>Placa</small><br><strong style="font-size:19px;">${escapar(c.placa || '—')}</strong></div>
+            <div><small>Produto</small><br><strong>${escapar((c.produto_icone || '') + ' ' + (c.produto_nome || '—'))}</strong></div>
+            <div><small>Preço na bomba</small><br><strong>R$ ${(c.preco_bomba || 0).toFixed(2)}</strong></div>
+            <div><small>Preço com desconto</small><br><strong style="color:#2e7d32;">R$ ${(c.preco_com_desconto || 0).toFixed(2)}</strong></div>
+            <div><small>Saldo do cupom</small><br><strong style="font-size:19px;">${(c.quantidade_restante || 0).toFixed(2)} ${escapar(c.unidade || 'L')}</strong></div>
+        </div>
+        ${alertaPlaca}`;
+
+    if (c.valido) {
+        faixa.className = 'faixa ok';
+        faixa.textContent = c.uso_unico
+            ? '✓ Cupom válido — atenção: vale para UM abastecimento só'
+            : '✓ Cupom válido — pode abastecer';
+        bloco.style.display = 'block';
+
+        // O caixa precisa avisar o motorista ANTES de encher, senão a
+        // reclamação vem depois — e com razão.
+        const nota = document.getElementById('nota-uso-unico');
+        if (nota) {
+            nota.hidden = !c.uso_unico;
+            nota.textContent = c.uso_unico
+                ? `⚠ Avise o motorista: o que sobrar dos ${(c.quantidade_restante || 0).toFixed(2)} ` +
+                  `${c.unidade || 'L'} não fica para depois. O cupom encerra nesta baixa.`
+                : '';
+        }
+
+        document.getElementById('baixa-saldo').textContent =
+            (c.quantidade_restante || 0).toFixed(2) + ' ' + (c.unidade || 'L');
+        const campo = document.getElementById('baixa-litros');
+        campo.value = '';
+        campo.max = c.quantidade_restante;
+        campo.focus();
+    } else {
+        faixa.className = 'faixa erro';
+        faixa.textContent = '✖ ' + (c.motivo || 'Cupom não pode ser usado');
+        bloco.style.display = 'none';
+    }
+}
+
+function usarSaldoTotalCaixa() {
+    if (!cupomAberto) return;
+    document.getElementById('baixa-litros').value = cupomAberto.quantidade_restante;
+}
+
+function fecharCupomCaixa() {
+    cupomAberto = null;
+    document.getElementById('card-cupom-aberto').style.display = 'none';
+    focarLeitura();
+}
+
+async function confirmarBaixaCaixa() {
+    if (!cupomAberto) return;
+
+    const erroEl = document.getElementById('baixa-erro');
+    const botao = document.getElementById('btn-baixa');
+    erroEl.textContent = '';
+
+    const litros = parseFloat(document.getElementById('baixa-litros').value);
+    const valor = parseFloat(document.getElementById('baixa-valor').value) || 0;
+
+    if (!litros || litros <= 0) {
+        erroEl.textContent = 'Informe quantos litros foram abastecidos.';
+        return;
+    }
+    if (litros > cupomAberto.quantidade_restante + 0.001) {
+        erroEl.textContent = `Excede o saldo: restam ${cupomAberto.quantidade_restante.toFixed(2)} ${cupomAberto.unidade || 'L'}.`;
+        return;
+    }
+
+    botao.disabled = true;
+    botao.textContent = 'Registrando…';
+
+    try {
+        const d = await api('/cupom/usar', {
+            method: 'POST',
+            body: JSON.stringify({
+                qrcode: cupomAberto.qrcode,
+                produto_id: cupomAberto.produto_id,
+                quantidade: litros,
+                valor_sem_desconto: valor
+            })
+        });
+
+        aviso(`Baixa registrada: ${litros.toFixed(2)} ${cupomAberto.unidade || 'L'} · ` +
+              `saldo restante ${(d.quantidade_restante ?? 0).toFixed(2)}`);
+        fecharCupomCaixa();
+        carregarCuponsDoDia();
+    } catch (e) {
+        erroEl.textContent = e.message;
+    } finally {
+        botao.disabled = false;
+        botao.textContent = '✅ Dar baixa';
+    }
 }
 
 // ===================== CONVÊNIOS COM EMPRESAS =====================

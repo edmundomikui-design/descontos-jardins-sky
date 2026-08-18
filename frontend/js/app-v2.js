@@ -823,7 +823,8 @@ function criarCupomGerado() {
             </div>
 
             <div class="cupom-limites">
-                <p>⚠️ Um cupom por produto/dia | Válido por 24h</p>
+                <p>⚠️ Um cupom por produto/dia | Um abastecimento por cupom —
+                   aproveite todo o limite de uma vez, o que sobrar não fica para depois</p>
             </div>
 
             <button onclick="imprimirCupom()" class="btn btn-secondary">
