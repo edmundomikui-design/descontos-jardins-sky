@@ -86,10 +86,14 @@
 
                         <div class="form-group" id="grupo-convenio" style="display:none;">
                             <label for="cadastro-empresa">Empresa do convênio:</label>
-                            <input type="text" id="cadastro-empresa" name="empresa_convenio"
-                                   placeholder="Nome da empresa onde você trabalha"
-                                   autocomplete="organization">
-                            <small class="ajuda">Só vale para empresas com convênio ativo com os postos CAJ e SKY.</small>
+                            <select id="cadastro-empresa" name="empresa_convenio_id">
+                                <option value="">Carregando empresas...</option>
+                            </select>
+                            <small class="ajuda" id="ajuda-convenio">
+                                Só aparecem aqui as empresas com convênio assinado com os postos
+                                CAJ e SKY. Seu cadastro passa por conferência da gerência antes
+                                de liberar os cupons.
+                            </small>
                         </div>
 
                         <div class="form-group">

@@ -51,6 +51,9 @@
     <nav class="abas">
         <button class="aba ativa" data-aba="caixa" onclick="trocarAba('caixa')">📊 Fechamento de Caixa</button>
         <button class="aba somente-gerencia" data-aba="precos" onclick="trocarAba('precos')">💲 Preços e Descontos</button>
+        <button class="aba somente-gerencia" data-aba="convenios" onclick="trocarAba('convenios')">
+            🏢 Convênios <span id="selo-pendentes" class="selo-pendentes" hidden>0</span>
+        </button>
         <button class="aba somente-gerencia" data-aba="suspeitas" onclick="trocarAba('suspeitas')">🕵️ Padrões Suspeitos</button>
         <button class="aba" data-aba="auditoria" onclick="trocarAba('auditoria')">🔍 Histórico de Alterações</button>
         <button class="aba somente-master" data-aba="usuarios" onclick="trocarAba('usuarios')">👥 Usuários</button>
@@ -135,6 +138,66 @@
     </section>
 
     <!-- ===== PADRÕES SUSPEITOS ===== -->
+    <!-- ===== CONVÊNIOS COM EMPRESAS ===== -->
+    <section id="aba-convenios" class="conteudo" style="display:none;">
+        <p class="ajuda">
+            Só empresas cadastradas aqui aparecem no menu do cadastro do aplicativo.
+            Quem trabalha numa empresa sem convênio não consegue nem tentar se cadastrar
+            como funcionário — e quem consegue ainda passa por esta fila antes de gerar cupom.
+        </p>
+
+        <!-- Fila de aprovação -->
+        <div class="card">
+            <h3>Cadastros aguardando liberação</h3>
+            <p class="ajuda">
+                Confira o comprovante e o vínculo antes de aprovar. Enquanto estiver aqui,
+                a pessoa não consegue gerar nenhum cupom.
+            </p>
+            <div id="pendentes-conteudo" class="rolagem">
+                <p class="vazio">Carregando…</p>
+            </div>
+        </div>
+
+        <!-- Cadastro de nova empresa -->
+        <div class="card">
+            <h3>Cadastrar empresa conveniada</h3>
+            <p class="ajuda">
+                Cadastre só depois do convênio assinado. O domínio de e-mail é opcional,
+                mas é a trava mais forte: com ele preenchido, só quem tem e-mail da empresa
+                consegue se cadastrar.
+            </p>
+            <div class="filtros">
+                <label>Nome da empresa
+                    <input type="text" id="empresa-nome" placeholder="Ex.: Construtora Alfa Ltda">
+                </label>
+                <label>CNPJ
+                    <input type="text" id="empresa-cnpj" placeholder="00.000.000/0000-00"
+                           inputmode="numeric">
+                </label>
+                <label>Domínio do e-mail (opcional)
+                    <input type="text" id="empresa-dominio" placeholder="alfa.com.br"
+                           autocapitalize="off" spellcheck="false">
+                </label>
+                <label>Limite de funcionários
+                    <input type="number" id="empresa-limite" min="0" value="0" placeholder="0">
+                </label>
+                <button onclick="cadastrarEmpresaConvenio()" class="btn btn-primary">
+                    Cadastrar convênio
+                </button>
+            </div>
+            <p class="ajuda">Limite 0 = sem teto. Combine o número com o RH da empresa.</p>
+            <div id="empresa-msg"></div>
+        </div>
+
+        <!-- Empresas já cadastradas -->
+        <div class="card">
+            <h3>Empresas com convênio</h3>
+            <div id="empresas-conteudo" class="rolagem">
+                <p class="vazio">Carregando…</p>
+            </div>
+        </div>
+    </section>
+
     <section id="aba-suspeitas" class="conteudo" style="display:none;">
         <p class="ajuda">
             Nada aqui é acusação — são padrões que valem uma olhada.
