@@ -116,6 +116,21 @@ def validar_cnpj(cnpj):
     return n[12:] == d1 + d2
 
 
+def exige_alcada_master(email, dominio_empresa):
+    """
+    Diz se este cadastro só pode ser liberado pelo Master.
+
+    Vale quando a empresa exige e-mail corporativo e a pessoa se cadastrou com
+    outro (Gmail, por exemplo). Não é bloqueio: é exceção, e exceção sobe de
+    nível. Calculado na hora, comparando o e-mail com o domínio atual da
+    empresa — se o convênio mudar de domínio depois, a regra acompanha.
+    """
+    dominio = (dominio_empresa or '').strip().lower().lstrip('@')
+    if not dominio:
+        return False
+    return not (email or '').strip().lower().endswith('@' + dominio)
+
+
 def formatar_cnpj(cnpj):
     """00.000.000/0000-00 para exibição."""
     n = normalizar_cnpj(cnpj)
@@ -401,6 +416,7 @@ def cadastro():
         # gerência) e o cadastro fica pendente até alguém de alçada aprovar.
         status_inicial = 'ativo'
         empresa = None
+        sem_email_corporativo = False
 
         if registro_tipo == 'convenio':
             if not empresa_convenio_id:
@@ -424,17 +440,14 @@ def cadastro():
                     'erro': 'Essa empresa não tem convênio ativo com os postos CAJ e SKY.'
                 }), 400
 
-            # Se a empresa informou o domínio do e-mail corporativo, ele passa
-            # a ser exigido: é a prova mais barata de que a pessoa trabalha lá.
+            # O domínio corporativo é a prova mais barata de vínculo, mas
+            # barrar quem não tem seria injusto: muito funcionário de chão de
+            # fábrica só tem Gmail. Então não bloqueia — deixa cadastrar,
+            # marca o caso e joga a decisão para o Master (gerência não
+            # resolve exceção).
             dominio = (empresa['dominio_email'] or '').strip().lower().lstrip('@')
-            if dominio:
-                email_informado = (data.get('email') or '').strip().lower()
-                if not email_informado.endswith('@' + dominio):
-                    conn.close()
-                    return jsonify({
-                        'erro': f'Para o convênio da {empresa["nome"]} é preciso usar o '
-                                f'e-mail corporativo (@{dominio}).'
-                    }), 400
+            email_informado = (data.get('email') or '').strip().lower()
+            sem_email_corporativo = bool(dominio) and not email_informado.endswith('@' + dominio)
 
             # Teto de funcionários combinado com o RH: mesmo que alguém burle
             # tudo, o estrago para no número contratado.
@@ -517,7 +530,11 @@ def cadastro():
         cliente_id = cursor.lastrowid
         conn.close()
 
-        if status_inicial == 'pendente':
+        if status_inicial == 'pendente' and sem_email_corporativo:
+            mensagem = (f'Cadastro enviado para análise. Como você não usou o e-mail da '
+                        f'{empresa_convenio}, a liberação precisa passar pelo responsável '
+                        f'dos postos — pode demorar um pouco mais.')
+        elif status_inicial == 'pendente':
             mensagem = (f'Cadastro enviado para análise. Assim que a gerência confirmar '
                         f'seu vínculo com a {empresa_convenio}, você poderá gerar cupons. '
                         f'Você receberá um aviso.')
@@ -2467,10 +2484,16 @@ def admin_cadastros_pendentes():
         ''')
 
         pendentes = []
+        total_so_master = 0
         for c in cursor.fetchall():
             email = (c['email'] or '').lower()
             dominio = (c['empresa_dominio'] or '').strip().lower().lstrip('@')
+            so_master = exige_alcada_master(c['email'], c['empresa_dominio'])
+            if so_master:
+                total_so_master += 1
             pendentes.append({
+                'exige_master': so_master,
+                'empresa_dominio': dominio or None,
                 'id': c['id'],
                 'nome': c['nome'],
                 'cpf': c['cpf'],
@@ -2485,7 +2508,12 @@ def admin_cadastros_pendentes():
                 'email_corporativo': bool(dominio and email.endswith('@' + dominio))
             })
         conn.close()
-        return jsonify({'pendentes': pendentes, 'total': len(pendentes)}), 200
+        return jsonify({
+            'pendentes': pendentes,
+            'total': len(pendentes),
+            'total_exige_master': total_so_master,
+            'meu_nivel': request.admin['nivel']
+        }), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
@@ -2510,9 +2538,13 @@ def admin_decidir_cadastro(cliente_id):
         conn = get_db()
         cursor = conn.cursor()
 
-        cursor.execute(
-            'SELECT id, nome, status, empresa_convenio FROM clientes WHERE id = ?',
-            (cliente_id,))
+        cursor.execute('''
+            SELECT c.id, c.nome, c.status, c.email, c.empresa_convenio,
+                   e.dominio_email AS empresa_dominio
+            FROM clientes c
+            LEFT JOIN empresas_convenio e ON e.id = c.empresa_convenio_id
+            WHERE c.id = ?
+        ''', (cliente_id,))
         cliente = cursor.fetchone()
         if not cliente:
             conn.close()
@@ -2523,6 +2555,19 @@ def admin_decidir_cadastro(cliente_id):
             return jsonify({
                 'erro': f'Esse cadastro já foi analisado (situação atual: {cliente["status"]}).'
             }), 400
+
+        # Exceção ao e-mail corporativo é alçada do Master. A gerência aprova o
+        # caso normal; abrir mão da única prova objetiva de vínculo não é
+        # decisão de quem está no balcão.
+        if (decisao == 'aprovar'
+                and exige_alcada_master(cliente['email'], cliente['empresa_dominio'])
+                and request.admin['nivel'] != 'master'):
+            conn.close()
+            return jsonify({
+                'erro': f'{cliente["nome"]} não usou o e-mail corporativo '
+                        f'(@{(cliente["empresa_dominio"] or "").lstrip("@")}). '
+                        f'Só o administrador Master pode liberar essa exceção.'
+            }), 403
 
         novo_status = 'ativo' if decisao == 'aprovar' else 'recusado'
         agora_iso = datetime.now().isoformat()
