@@ -59,6 +59,15 @@ _PLACA_ANTIGA = re.compile(r'^[A-Z]{3}[0-9]{4}$')
 _PLACA_MERCOSUL = re.compile(r'^[A-Z]{3}[0-9][A-Z][0-9]{2}$')
 
 # O que cada ocupação precisa comprovar
+# Cupom vale para UM abastecimento só. Se o motorista pôs 20 L num cupom de
+# 50 L, o cupom fecha e os 30 L restantes não valem mais — ele deve aproveitar
+# o limite de uma vez.
+#
+# Regra de negócio, não limitação técnica: evita o mesmo cliente voltando
+# várias vezes no dia por pouco volume. Trocar para False devolve o uso em
+# partes, sem mexer em mais nada.
+USO_UNICO = True
+
 PERFIL_OCUPACAO = {
     'táxi':       {'registro': 'condutax', 'comprovante': 'licenca_taxi'},
     'taxi':       {'registro': 'condutax', 'comprovante': 'licenca_taxi'},
@@ -819,6 +828,7 @@ def gerar_cupom():
             'desconto_por_unidade': round(desconto_por_unidade, 2),
             'quantidade_permitida': quantidade_permitida,
             'economia_total': round(economia_total, 2),
+            'uso_unico': USO_UNICO,
             'mensagem': 'QR code gerado com sucesso!'
         }), 200
 
@@ -972,10 +982,21 @@ def consultar_cupom():
             )
         elif cupom['cliente_status'] and cupom['cliente_status'] != 'ativo':
             valido, motivo = False, 'Cadastro do motorista está inativo.'
+        elif (cupom['status'] or '').lower() == 'completo':
+            # Com uso único o cupom fecha mesmo sobrando saldo. Quem manda é o
+            # status, não a conta de litros — senão a tela mostraria "válido,
+            # restam 30 L" para um cupom que a baixa já encerrou.
+            valido, motivo = False, ('Cupom já utilizado. Vale para um abastecimento só — '
+                                     'o motorista deve gerar um novo amanhã.')
         elif restante <= 0:
             valido, motivo = False, 'Cupom já usado por completo hoje.'
         else:
             valido, motivo = True, None
+
+        # Cupom encerrado não tem saldo a mostrar, mesmo que a subtração dê
+        # um número positivo.
+        if not valido and (cupom['status'] or '').lower() == 'completo':
+            restante = 0
 
         return jsonify({
             'valido': valido,
@@ -999,7 +1020,10 @@ def consultar_cupom():
             'preco_com_desconto': round(preco - desc_unidade, 2),
             'quantidade_permitida': round(permitida, 2),
             'quantidade_utilizada': round(utilizada, 2),
-            'quantidade_restante': restante
+            'quantidade_restante': restante,
+            # Avisa a tela do caixa/frentista ANTES da baixa: o motorista
+            # precisa saber que não volta depois com o que sobrar.
+            'uso_unico': USO_UNICO
         }), 200
 
     except Exception as e:
@@ -1134,7 +1158,17 @@ def usar_cupom():
 
         # Atualiza cupom
         nova_quantidade_utilizada = cupom['quantidade_utilizada'] + quantidade_agora
-        novo_status = 'completo' if nova_quantidade_utilizada >= cupom['quantidade_permitida'] else 'parcial'
+
+        # USO ÚNICO: o cupom fecha na primeira baixa, sobrando saldo ou não.
+        # É decisão de negócio, não limitação técnica — o objetivo é que o
+        # motorista encha o tanque de uma vez em vez de voltar três vezes no
+        # dia por 10 litros. Para voltar a permitir uso em partes, basta
+        # trocar USO_UNICO para False lá no começo do arquivo.
+        if USO_UNICO:
+            novo_status = 'completo'
+        else:
+            novo_status = ('completo' if nova_quantidade_utilizada >= cupom['quantidade_permitida']
+                           else 'parcial')
 
         cursor.execute('''
             UPDATE cupons
@@ -1174,7 +1208,13 @@ def usar_cupom():
             'cupom_status': novo_status,
             'quantidade_utilizada': nova_quantidade_utilizada,
             'quantidade_permitida': cupom['quantidade_permitida'],
-            'quantidade_restante': litros_restantes - quantidade_agora
+            # Com uso único o cupom fecha aqui, sobrando saldo ou não — o
+            # saldo deixa de existir e a tela não pode sugerir que resta algo.
+            'quantidade_restante': (0 if USO_UNICO
+                                    else litros_restantes - quantidade_agora),
+            'uso_unico': USO_UNICO,
+            'saldo_perdido': (round(litros_restantes - quantidade_agora, 2)
+                              if USO_UNICO else 0)
         }), 200
 
     except Exception as e:
@@ -2114,6 +2154,127 @@ def admin_comprovante(cliente_id):
             'tipo_comprovante': c['foto_comprovante_tipo'],
             'enviado_em': c['data_foto_comprovante'],
             'imagem': c['foto_comprovante']
+        }), 200
+
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/cupons-do-dia', methods=['GET'])
+@exige_admin
+def admin_cupons_do_dia():
+    """
+    Todo o movimento de cupons do dia, para a tela que fica aberta no caixa.
+
+    Nível caixa também enxerga: quem opera a bomba precisa ver o que está
+    valendo agora. A trava de reuso não está aqui — está no saldo gravado no
+    banco, que /api/cupom/usar confere a cada baixa. Esta tela é para
+    enxergar o movimento e achar um código depressa.
+    """
+    try:
+        data_ref = (request.args.get('data') or '').strip() or datetime.now().strftime('%Y-%m-%d')
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT c.id, c.qrcode, c.status, c.data_geracao,
+                   c.quantidade_permitida, c.quantidade_utilizada,
+                   c.data_ultimo_uso, c.turno_ultimo_uso,
+                   c.preco_unitario, c.desconto_unitario,
+                   p.nome AS produto_nome, p.icone AS produto_icone, p.unidade,
+                   cl.id AS cliente_id, cl.nome AS cliente_nome, cl.placa,
+                   cl.ocupacao, cl.empresa_convenio
+            FROM cupons c
+            LEFT JOIN produtos p ON p.id = c.produto_id
+            LEFT JOIN clientes cl ON cl.id = c.cliente_id
+            WHERE c.data_geracao = ?
+            ORDER BY c.id DESC
+        ''', (data_ref,))
+        linhas = cursor.fetchall()
+
+        # Onde cada cupom foi abastecido. Um cupom pode ser usado em partes,
+        # inclusive nos dois postos — por isso a lista de postos, não um só.
+        cursor.execute('''
+            SELECT cupom_id, poster_id, COUNT(*) AS vezes,
+                   MAX(hora) AS ultima_hora, MAX(registrado_por) AS ultimo_frentista
+            FROM abastecimentos
+            WHERE data = ? AND cupom_id IS NOT NULL
+            GROUP BY cupom_id, poster_id
+        ''', (data_ref,))
+        por_cupom = {}
+        for a in cursor.fetchall():
+            registro = por_cupom.setdefault(a['cupom_id'], {'postos': [], 'vezes': 0,
+                                                            'ultima_hora': None,
+                                                            'ultimo_frentista': None})
+            registro['postos'].append(a['poster_id'])
+            registro['vezes'] += a['vezes'] or 0
+            if not registro['ultima_hora'] or (a['ultima_hora'] or '') > registro['ultima_hora']:
+                registro['ultima_hora'] = a['ultima_hora']
+                registro['ultimo_frentista'] = a['ultimo_frentista']
+        conn.close()
+
+        cupons = []
+        total_emitidos = total_parciais = total_esgotados = 0
+        litros_abastecidos = desconto_concedido = 0.0
+
+        for c in linhas:
+            permitida = c['quantidade_permitida'] or 0
+            utilizada = c['quantidade_utilizada'] or 0
+            restante = round(permitida - utilizada, 2)
+            desconto_unit = c['desconto_unitario'] or 0
+            uso = por_cupom.get(c['id'], {})
+
+            situacao = (c['status'] or 'pendente').lower()
+            if situacao == 'completo' or restante <= 0:
+                rotulo, total_esgotados = 'esgotado', total_esgotados + 1
+                # Com uso único o cupom fecha sobrando litros. Mostrar "saldo
+                # 30 L" num cupom encerrado faria o caixa tentar uma baixa que
+                # o servidor vai recusar.
+                restante = 0
+            elif utilizada > 0:
+                rotulo, total_parciais = 'parcial', total_parciais + 1
+            else:
+                rotulo, total_emitidos = 'emitido', total_emitidos + 1
+
+            litros_abastecidos += utilizada
+            desconto_concedido += utilizada * desconto_unit
+
+            cupons.append({
+                'cupom_id': c['id'],
+                'codigo': c['qrcode'],
+                'situacao': rotulo,
+                'cliente_id': c['cliente_id'],
+                'cliente_nome': c['cliente_nome'],
+                'placa': c['placa'],
+                'ocupacao': c['ocupacao'],
+                'empresa_convenio': c['empresa_convenio'],
+                'produto_nome': c['produto_nome'],
+                'produto_icone': c['produto_icone'],
+                'unidade': c['unidade'] or 'L',
+                'quantidade_permitida': round(permitida, 2),
+                'quantidade_utilizada': round(utilizada, 2),
+                'quantidade_restante': restante,
+                'preco_unitario': round(c['preco_unitario'] or 0, 2),
+                'desconto_por_unidade': round(desconto_unit, 2),
+                'economia_ate_agora': round(utilizada * desconto_unit, 2),
+                'postos': sorted(set(p for p in uso.get('postos', []) if p)),
+                'vezes_abastecido': uso.get('vezes', 0),
+                'ultima_hora': uso.get('ultima_hora'),
+                'ultimo_frentista': uso.get('ultimo_frentista')
+            })
+
+        return jsonify({
+            'data': data_ref,
+            'cupons': cupons,
+            'resumo': {
+                'total': len(cupons),
+                'emitidos': total_emitidos,
+                'parciais': total_parciais,
+                'esgotados': total_esgotados,
+                'litros_abastecidos': round(litros_abastecidos, 2),
+                'desconto_concedido': round(desconto_concedido, 2)
+            }
         }), 200
 
     except Exception as e:
