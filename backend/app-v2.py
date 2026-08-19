@@ -478,7 +478,8 @@ def cadastro():
             conn.close()
             return jsonify({'erro': 'CPF já cadastrado'}), 400
 
-        cursor.execute('SELECT id FROM clientes WHERE email = ?', (data.get('email'),))
+        cursor.execute('SELECT id FROM clientes WHERE LOWER(email) = LOWER(?)',
+                       ((data.get('email') or '').strip(),))
         if cursor.fetchone():
             conn.close()
             return jsonify({'erro': 'Email já cadastrado'}), 400
@@ -564,11 +565,14 @@ def login():
         conn = get_db()
         cursor = conn.cursor()
 
+        # Mesmo motivo do login do painel: o celular põe maiúscula na primeira
+        # letra sozinho, e o motorista que cadastrou "Joao@gmail.com" não
+        # conseguia mais entrar digitando "joao@gmail.com".
         cursor.execute('''
             SELECT id, nome, email, senha_hash, placa, ocupacao,
                    status, motivo_recusa, empresa_convenio
-            FROM clientes WHERE email = ?
-        ''', (email,))
+            FROM clientes WHERE LOWER(email) = LOWER(?)
+        ''', ((email or '').strip(),))
         cliente = cursor.fetchone()
         conn.close()
 
@@ -1358,9 +1362,13 @@ def admin_login():
 
         conn = get_db()
         cursor = conn.cursor()
+        # LOWER dos dois lados: nome de usuário não pode ser sensível a
+        # maiúscula. Quem foi cadastrado como "Carlos" e digitava "carlos" no
+        # balcão levava "usuário ou senha incorretos" sem ter como descobrir
+        # o porquê — o painel ainda o mostrava como Ativo.
         cursor.execute('''
             SELECT id, usuario, nome, senha_hash, poster_id, nivel, ativo
-            FROM admin WHERE usuario = ?
+            FROM admin WHERE LOWER(usuario) = LOWER(?)
         ''', (usuario,))
         admin = cursor.fetchone()
 
@@ -1470,10 +1478,16 @@ def admin_criar_usuario():
         conn = get_db()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT id FROM admin WHERE usuario = ?', (usuario,))
-        if cursor.fetchone():
+        # Mesma regra da tela de login: se "carlos" e "Carlos" logam no mesmo
+        # lugar, não podem existir os dois.
+        cursor.execute('SELECT id, usuario FROM admin WHERE LOWER(usuario) = LOWER(?)', (usuario,))
+        ja_existe = cursor.fetchone()
+        if ja_existe:
             conn.close()
-            return jsonify({'erro': 'Esse usuário já existe'}), 400
+            return jsonify({
+                'erro': f'Já existe um usuário "{ja_existe["usuario"]}" '
+                        f'(maiúsculas e minúsculas não diferenciam).'
+            }), 400
 
         cursor.execute('''
             INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, ativo)
