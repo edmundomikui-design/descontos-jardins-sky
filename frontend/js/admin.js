@@ -476,22 +476,49 @@ async function carregarPendentes() {
     try {
         const d = await api('/admin/cadastros-pendentes');
         atualizarSeloPendentes(d.total || 0);
+        window.pendentesCache = d.pendentes || [];
 
         if (!d.pendentes || !d.pendentes.length) {
             alvo.innerHTML = '<p class="vazio">Nenhum cadastro aguardando. Tudo em dia.</p>';
             return;
         }
 
+        const souMaster = (d.meu_nivel || sessao.nivel) === 'master';
+
         alvo.innerHTML = d.pendentes.map(p => {
             const sinalEmail = p.email_corporativo
                 ? '<span style="color:#0ca30c;">✓ e-mail corporativo confere</span>'
-                : '<span style="color:#e65100;">⚠ e-mail não é o da empresa</span>';
+                : `<span style="color:#e65100;">⚠ e-mail não é da empresa` +
+                  `${p.empresa_dominio ? ' (esperado @' + escapar(p.empresa_dominio) + ')' : ''}</span>`;
             const sinalFoto = p.tem_comprovante
                 ? `<button class="btn" onclick="verComprovante(${p.id})">Ver comprovante</button>`
                 : '<span style="color:#c62828;">sem comprovante</span>';
 
+            // Exceção ao e-mail corporativo é alçada do Master. Se quem está
+            // olhando é gerência, o botão some e a tela diz o porquê — botão
+            // que existe e dá erro ao clicar é pior do que botão nenhum.
+            const travadoParaMim = p.exige_master && !souMaster;
+
+            const avisoMaster = p.exige_master
+                ? `<p style="background:#fff3e0; border-left:4px solid #FF9800; padding:8px 10px;
+                          border-radius:6px; margin:8px 0; font-size:13px; color:#e65100;">
+                     🔒 Exceção: sem e-mail corporativo.
+                     ${travadoParaMim
+                        ? 'Só o administrador Master pode liberar este cadastro.'
+                        : 'Confira bem o comprovante antes de aprovar — a prova de vínculo mais forte não veio.'}
+                   </p>`
+                : '';
+
+            const botoesDecisao = travadoParaMim
+                ? `<span style="color:#888; font-size:13px; align-self:center;">
+                     Aguardando o Master
+                   </span>`
+                : `<button class="btn btn-primary" onclick="decidirCadastro(${p.id}, 'aprovar', '${escapar(p.nome)}')">
+                       ✅ Aprovar
+                   </button>`;
+
             return `
-            <div class="card" style="margin-bottom:12px;">
+            <div class="card" style="margin-bottom:12px;${p.exige_master ? ' border-left:4px solid #FF9800;' : ''}">
                 <h4 style="margin:0 0 6px;">${escapar(p.nome)}</h4>
                 <p style="margin:2px 0; font-size:14px;">
                     <strong>${escapar(p.empresa || '—')}</strong>
@@ -501,11 +528,10 @@ async function carregarPendentes() {
                     ${escapar(p.email)} · ${escapar(p.tel || '')} · placa ${escapar(p.placa || '—')}
                 </p>
                 <p style="margin:6px 0; font-size:13px;">${sinalEmail}</p>
+                ${avisoMaster}
                 <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
                     ${sinalFoto}
-                    <button class="btn btn-primary" onclick="decidirCadastro(${p.id}, 'aprovar', '${escapar(p.nome)}')">
-                        ✅ Aprovar
-                    </button>
+                    ${botoesDecisao}
                     <button class="btn" style="background:#c62828; color:#fff;"
                             onclick="decidirCadastro(${p.id}, 'recusar', '${escapar(p.nome)}')">
                         ✖ Recusar
@@ -536,9 +562,17 @@ async function decidirCadastro(clienteId, decisao, nome) {
             aviso('É preciso escrever o motivo da recusa.', 'erro');
             return;
         }
-    } else if (!confirm(`Aprovar o cadastro de ${nome}?\n\n` +
-                        `Ele passa a gerar cupons com desconto imediatamente.`)) {
-        return;
+    } else {
+        const p = (window.pendentesCache || []).find(x => x.id === clienteId);
+        const extra = p && p.exige_master
+            ? `\n\n⚠ ATENÇÃO: esta pessoa NÃO usou o e-mail corporativo` +
+              `${p.empresa_dominio ? ' (@' + p.empresa_dominio + ')' : ''}. ` +
+              `Você está abrindo uma exceção — confira o comprovante de vínculo.`
+            : '';
+        if (!confirm(`Aprovar o cadastro de ${nome}?\n\n` +
+                     `Ele passa a gerar cupons com desconto imediatamente.${extra}`)) {
+            return;
+        }
     }
 
     try {
