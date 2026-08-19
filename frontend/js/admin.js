@@ -1161,6 +1161,9 @@ async function carregarUsuarios() {
                             <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
                             <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
                             <td>
+                                <button class="btn-mini" onclick="redefinirSenhaUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}')">
+                                    🔑 Redefinir senha
+                                </button>
                                 <button class="btn-mini" onclick="alternarUsuario(${u.id}, ${u.ativo ? 0 : 1})">
                                     ${u.ativo ? 'Desativar' : 'Reativar'}
                                 </button>
@@ -1172,6 +1175,31 @@ async function carregarUsuarios() {
         `;
     } catch (erro) {
         container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+// Sem isto, funcionário que esquece a senha fica trancado para sempre: a tela
+// de "trocar senha" só troca a do próprio usuário logado, e não havia como o
+// Master resolver — só desativar e criar outro.
+async function redefinirSenhaUsuario(usuarioId, nomeUsuario) {
+    const nova = prompt(
+        `Nova senha para "${nomeUsuario}":\n\n` +
+        `Mínimo 8 caracteres. Anote e entregue a ele — ninguém consegue ver a senha depois.`);
+
+    if (nova === null) return;
+    if (nova.trim().length < 8) {
+        aviso('A senha precisa ter ao menos 8 caracteres.', 'erro');
+        return;
+    }
+
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ senha_nova: nova.trim() })
+        });
+        aviso(`Senha de ${nomeUsuario} redefinida. Ele precisa entrar de novo com a senha nova.`);
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
     }
 }
 
