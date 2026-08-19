@@ -312,6 +312,61 @@ def desconto_por_unidade(preco, valor, tipo):
     return preco * (valor / 100) if tipo == 'percentual' else valor
 
 
+# Acima desta variação, o sistema pede confirmação antes de gravar preço de
+# custo ou de venda. 10% é folgado para o mercado de combustível e apertado o
+# bastante para pegar erro de digitação.
+VARIACAO_QUE_PEDE_CONFIRMACAO = 10.0
+
+
+def _conferir_variacao_precos(cursor, produtos):
+    """
+    Devolve a lista de mudanças de preço que fogem do normal e ainda não foram
+    confirmadas pelo Master. Lista vazia = pode gravar.
+
+    Só compara quando já existe valor anterior: o primeiro cadastro de um custo
+    não tem com o que ser comparado e passa direto.
+    """
+    pendentes = []
+
+    for p in produtos:
+        if not p.get('id') or p.get('confirma_variacao'):
+            continue
+
+        cursor.execute('SELECT nome, preco_atual, preco_custo FROM produtos WHERE id = ?',
+                       (p['id'],))
+        atual = cursor.fetchone()
+        if not atual:
+            continue
+
+        for campo, rotulo in (('preco_custo', 'preço de custo'),
+                              ('preco_atual', 'preço de venda')):
+            if campo not in p:
+                continue
+
+            try:
+                novo = round(float(p[campo]), 2)
+            except (TypeError, ValueError):
+                continue
+
+            anterior = round(atual[campo] or 0, 2)
+            if anterior <= 0 or novo == anterior:
+                continue
+
+            variacao = (novo - anterior) / anterior * 100
+            if abs(variacao) > VARIACAO_QUE_PEDE_CONFIRMACAO:
+                pendentes.append({
+                    'produto_id': p['id'],
+                    'produto': atual['nome'],
+                    'campo': rotulo,
+                    'de': anterior,
+                    'para': novo,
+                    'variacao_pct': round(variacao, 1),
+                    'sentido': 'aumento' if variacao > 0 else 'queda'
+                })
+
+    return pendentes
+
+
 def validar_margem(nivel, nome, preco, custo, margem_minima, desc_unidade):
     """Trava de margem. Devolve mensagem de erro ou None se estiver liberado.
 
@@ -768,7 +823,8 @@ def gerar_cupom():
 
         # Verifica produto (preço, desconto e limite vêm da tela de administrador)
         cursor.execute('''
-            SELECT id, nome, preco_atual, unidade, desconto_valor, desconto_tipo, limite_litros
+            SELECT id, nome, preco_atual, unidade, desconto_valor, desconto_tipo,
+                   limite_litros, preco_custo
             FROM produtos
             WHERE id = ? AND ativo = 1
         ''', (produto_id,))
@@ -803,6 +859,21 @@ def gerar_cupom():
 
         desconto_por_unidade = min(desconto_por_unidade, preco)
         preco_final_unitario = preco - desconto_por_unidade
+
+        # Segunda camada: não emite cupom que já nasce dando prejuízo. A trava
+        # da tela de preços resolve o caso normal, mas o desconto pode ter sido
+        # gravado antes dessa trava existir, ou o custo pode ter subido depois.
+        # Cupom errado emitido é dinheiro perdido — o preço fica congelado nele.
+        custo_produto = round(produto['preco_custo'] or 0, 2)
+        if custo_produto > 0 and round(preco_final_unitario, 2) < custo_produto:
+            conn.close()
+            return jsonify({
+                'erro': f'{produto["nome"]} está com o desconto mal configurado no momento '
+                        f'e não podemos emitir o cupom. Tente outro produto ou volte mais '
+                        f'tarde — já avisamos a gerência.',
+                'motivo_tecnico': (f'preço final R$ {preco_final_unitario:.2f} abaixo do '
+                                   f'custo R$ {custo_produto:.2f}')
+            }), 409
 
         quantidade_permitida = produto['limite_litros'] or 50
         economia_total = desconto_por_unidade * quantidade_permitida
@@ -1105,7 +1176,7 @@ def usar_cupom():
         cliente = cursor.fetchone()
 
         cursor.execute('''
-            SELECT nome
+            SELECT nome, preco_custo
             FROM produtos
             WHERE id = ?
         ''', (produto_id,))
@@ -1153,6 +1224,27 @@ def usar_cupom():
         # nunca deixar o desconto passar do valor da compra
         valor_desconto = min(valor_desconto, valor_sem_desconto)
         valor_final = valor_sem_desconto - valor_desconto
+
+        # Terceira camada, a última antes do dinheiro sair: se este
+        # abastecimento fecha abaixo do custo, não registra. Vale para cupons
+        # emitidos antes das travas acima existirem, e para o caso do custo ter
+        # subido depois que o cupom foi gerado. Decisão do Edmundo (19/08):
+        # melhor o constrangimento na pista do que o prejuízo.
+        custo_unitario = round((produto['preco_custo'] if produto else 0) or 0, 2)
+        if custo_unitario > 0:
+            custo_total = round(custo_unitario * quantidade_agora, 2)
+            if round(valor_final, 2) < custo_total:
+                conn.close()
+                return jsonify({
+                    'erro': f'ABASTECIMENTO NÃO AUTORIZADO — este cupom está com desconto '
+                            f'maior que a margem do produto e daria prejuízo de '
+                            f'R$ {custo_total - valor_final:.2f}. Não libere a bomba e '
+                            f'avise a gerência.',
+                    'motivo': 'desconto_abaixo_do_custo',
+                    'valor_cobrado': round(valor_final, 2),
+                    'custo': custo_total
+                }), 409
+
         turno = obter_turno()
 
         # Registra abastecimento
@@ -1631,6 +1723,24 @@ def admin_atualizar_produtos():
         nivel = request.admin['nivel']
         mudancas = []   # guarda o que mudou para gravar na auditoria depois do commit
 
+        # ---- conferência de variação brusca (antes de gravar qualquer coisa) ----
+        #
+        # O preço de custo é o número que sustenta TODAS as travas de margem: se
+        # ele entra errado para baixo, a trava afrouxa e passa a liberar desconto
+        # que dá prejuízo. Combustível não varia 10% de um dia para o outro, então
+        # salto maior que isso é dedo errado (um zero a menos), não mercado.
+        #
+        # Não bloqueia: pede confirmação. O app reenvia com confirma_variacao=true
+        # depois que o Master olhar e concordar.
+        confirmacoes = _conferir_variacao_precos(cursor, produtos)
+        if confirmacoes:
+            conn.close()
+            return jsonify({
+                'erro': 'variacao_alta',
+                'confirmar': confirmacoes,
+                'mensagem': 'Variação fora do normal. Confira antes de salvar.'
+            }), 409
+
         for p in produtos:
             produto_id = p.get('id')
             if not produto_id:
@@ -2009,11 +2119,44 @@ def atualizar_descontos():
         conn = get_db()
         cursor = conn.cursor()
 
+        # O desconto por ocupação vale para TODO produto que não tenha desconto
+        # próprio — então precisa passar pela mesma trava de margem da tela de
+        # preços. Sem isto, um 5,00 digitado no lugar de 1,00 saía vendendo
+        # abaixo do custo para todos os motoristas daquela ocupação de uma vez,
+        # sem nada reclamar em lugar nenhum.
+        cursor.execute('''
+            SELECT nome, preco_atual, preco_custo
+            FROM produtos
+            WHERE ativo = 1 AND (desconto_valor IS NULL OR desconto_valor <= 0)
+        ''')
+        impedimentos = []
+        for prod in cursor.fetchall():
+            erro_margem = validar_margem(
+                'master', prod['nome'], prod['preco_atual'] or 0,
+                prod['preco_custo'] or 0, 0, novo_valor
+            )
+            if erro_margem:
+                impedimentos.append(erro_margem)
+
+        if impedimentos:
+            conn.close()
+            return jsonify({
+                'erro': f'Desconto de R$ {novo_valor:.2f} recusado — deixaria produto '
+                        f'abaixo do custo:\n• ' + '\n• '.join(impedimentos),
+                'produtos_afetados': len(impedimentos)
+            }), 400
+
         cursor.execute('''
             UPDATE clientes
             SET desconto_valor = ?, desconto_tipo = 'fixo'
             WHERE ocupacao = ?
         ''', (novo_valor, ocupacao))
+
+        registrar_auditoria(
+            cursor, request.admin, 'desconto_ocupacao',
+            campo=f'desconto {ocupacao}', valor_novo=f'R$ {novo_valor:.2f}',
+            detalhe=f'Aplicado a todos os clientes da ocupação {ocupacao}'
+        )
 
         conn.commit()
         clientes_atualizados = cursor.rowcount
