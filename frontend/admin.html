@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#1a237e">
     <title>Painel Administrativo - Jardins Sky</title>
-    <link rel="stylesheet" href="css/admin.css?v=4">
+    <link rel="stylesheet" href="css/admin.css?v=5">
 </head>
 <body>
 
@@ -58,6 +58,7 @@
         <button class="aba somente-gerencia" data-aba="suspeitas" onclick="trocarAba('suspeitas')">🕵️ Padrões Suspeitos</button>
         <button class="aba" data-aba="auditoria" onclick="trocarAba('auditoria')">🔍 Histórico de Alterações</button>
         <button class="aba somente-master" data-aba="usuarios" onclick="trocarAba('usuarios')">👥 Usuários</button>
+        <button class="aba" data-aba="senha" onclick="trocarAba('senha')">🔒 Minha senha</button>
     </nav>
 
     <div id="msg-global" class="msg-global"></div>
@@ -395,16 +396,29 @@
             <div id="lista-usuarios"></div>
         </div>
 
+    </section>
+
+    <!-- ===== MINHA SENHA =====
+         Fica em aba própria, sem restrição de nível: antes estava dentro de
+         Usuários, que é só do Master — na prática gerência e caixa nunca
+         conseguiam trocar a própria senha. -->
+    <section id="aba-senha" class="conteudo" style="display:none;">
         <div class="card">
             <h3>Trocar minha senha</h3>
+            <p class="ajuda">
+                Vale para o usuário que está logado agora. Depois de trocar, você
+                precisa entrar de novo com a senha nova.
+            </p>
             <form onsubmit="return trocarSenha(event)" class="form-linha">
                 <div>
                     <label>Senha atual</label>
-                    <input type="password" id="senha-atual" required>
+                    <input type="password" id="senha-atual" required
+                           autocomplete="current-password">
                 </div>
                 <div>
                     <label>Nova senha (mín. 8)</label>
-                    <input type="password" id="senha-nova" required>
+                    <input type="password" id="senha-nova" required
+                           autocomplete="new-password">
                 </div>
                 <button type="submit" class="btn btn-secundario">Trocar senha</button>
             </form>
@@ -412,6 +426,6 @@
     </section>
 </div>
 
-<script src="js/admin.js?v=4"></script>
+<script src="js/admin.js?v=5"></script>
 </body>
 </html>
