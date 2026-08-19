@@ -142,7 +142,14 @@ async function api(caminho, opcoes = {}) {
         throw new Error('Sessão expirada');
     }
 
-    if (!r.ok) throw new Error(d.erro || `Erro ${r.status}`);
+    if (!r.ok) {
+        // Leva o corpo da resposta junto: alguns erros (como a confirmação de
+        // variação de preço) precisam dos dados, não só da mensagem.
+        const falha = new Error(d.erro || `Erro ${r.status}`);
+        falha.status = r.status;
+        falha.dados = d;
+        throw falha;
+    }
     return d;
 }
 
@@ -1106,6 +1113,25 @@ function atualizarBotaoSalvar() {
         : '💾 Salvar alterações';
 }
 
+// Mostra a variação fora do normal e devolve true se o Master confirmar.
+// Existe porque o preço de custo é o número que sustenta todas as travas de
+// margem: um zero a menos aqui libera desconto que dá prejuízo lá na bomba.
+function confirmarVariacaoPrecos(lista) {
+    const linhas = lista.map(v => {
+        const seta = v.sentido === 'queda' ? '▼' : '▲';
+        return `${seta} ${v.produto} — ${v.campo}\n` +
+               `     de R$ ${v.de.toFixed(2)} para R$ ${v.para.toFixed(2)} ` +
+               `(${v.variacao_pct > 0 ? '+' : ''}${v.variacao_pct}%)`;
+    }).join('\n\n');
+
+    return confirm(
+        `⚠ VARIAÇÃO FORA DO NORMAL\n\n${linhas}\n\n` +
+        `Combustível não costuma variar tanto de um dia para o outro. ` +
+        `Confira se não faltou ou sobrou um zero.\n\n` +
+        `Os valores estão certos?`
+    );
+}
+
 async function salvarProdutos() {
     const botao = document.getElementById('btn-salvar-produtos');
     botao.disabled = true;
@@ -1128,10 +1154,33 @@ async function salvarProdutos() {
             ativo: linha.querySelector('.in-ativo').checked ? 1 : 0
         }));
 
-        const d = await api('/admin/produtos/atualizar', {
-            method: 'POST',
-            body: JSON.stringify({ produtos: payload })
-        });
+        let d;
+        try {
+            d = await api('/admin/produtos/atualizar', {
+                method: 'POST',
+                body: JSON.stringify({ produtos: payload })
+            });
+        } catch (falha) {
+            // Variação fora do normal: o servidor não gravou nada e devolveu a
+            // lista para o Master conferir. É o caso do zero a menos no custo.
+            if (falha.status === 409 && falha.dados && falha.dados.confirmar) {
+                if (!confirmarVariacaoPrecos(falha.dados.confirmar)) {
+                    aviso('Nada foi salvo. Confira os valores e tente de novo.', 'erro');
+                    return;
+                }
+                // Reenvia marcando só os produtos que o Master acabou de confirmar
+                const idsConfirmados = new Set(falha.dados.confirmar.map(x => x.produto_id));
+                payload.forEach(p => {
+                    if (idsConfirmados.has(p.id)) p.confirma_variacao = true;
+                });
+                d = await api('/admin/produtos/atualizar', {
+                    method: 'POST',
+                    body: JSON.stringify({ produtos: payload })
+                });
+            } else {
+                throw falha;
+            }
+        }
 
         aviso(`✅ ${d.mensagem}`);
         carregarProdutosAdmin();
