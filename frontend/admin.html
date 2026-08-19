@@ -359,15 +359,17 @@
             <form id="form-usuario" onsubmit="return criarUsuario(event)" class="form-linha">
                 <div>
                     <label>Nome</label>
-                    <input type="text" id="novo-nome" placeholder="Ex: João da Silva">
+                    <input type="text" id="novo-nome" placeholder="Ex: João da Silva"
+                           autocomplete="off">
                 </div>
                 <div>
                     <label>Usuário</label>
-                    <input type="text" id="novo-usuario" required>
+                    <input type="text" id="novo-usuario" required
+                           autocomplete="off" autocapitalize="off" spellcheck="false">
                 </div>
                 <div>
                     <label>Senha (mín. 8)</label>
-                    <input type="password" id="nova-senha" required>
+                    <input type="password" id="nova-senha" required autocomplete="new-password">
                 </div>
                 <div>
                     <label>Nível</label>
