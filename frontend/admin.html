@@ -11,7 +11,7 @@
 
 <!-- ===================== LOGIN ===================== -->
 <div id="tela-login" class="tela-login">
-    <div class="login-box">
+    <div class="login-box" id="box-login">
         <h1>⛽ Jardins Sky</h1>
         <p class="subtitulo">Painel Administrativo</p>
 
@@ -27,10 +27,60 @@
             <label>Senha</label>
             <input type="password" id="login-senha" autocomplete="current-password" required>
 
+            <!-- Só aparece no primeiro acesso. O primeiro Master é quem não
+                 tem ninguém acima para destravá-lo; sem e-mail, esquecer a
+                 senha custaria o painel inteiro. -->
+            <div id="campo-email-setup" style="display:none;">
+                <label>E-mail (para recuperar a senha)</label>
+                <input type="email" id="login-email-setup"
+                       autocapitalize="off" spellcheck="false" autocomplete="email">
+            </div>
+
             <button type="submit" class="btn btn-primary" id="btn-entrar">Entrar</button>
         </form>
 
+        <p style="text-align:center;margin:14px 0 0;font-size:14px;">
+            <a href="#" onclick="return abrirEsqueciSenhaAdmin()"
+               style="color:#1e3a8a;">Esqueci minha senha</a>
+        </p>
+
         <div id="login-erro" class="msg-erro"></div>
+    </div>
+
+    <!-- ESQUECI MINHA SENHA (equipe) -->
+    <div class="login-box" id="box-esqueci" style="display:none;">
+        <h1>🔑 Recuperar acesso</h1>
+        <p class="subtitulo">Painel Administrativo</p>
+
+        <p style="font-size:14px;color:#555;line-height:1.5;margin:0 0 16px;">
+            Digite seu <strong>usuário</strong> ou o <strong>e-mail</strong> cadastrado.
+            Mandamos um link para você criar uma senha nova. O link vale por 1 hora.
+        </p>
+
+        <form id="form-esqueci-admin" onsubmit="return pedirLinkAdmin(event)">
+            <label>Usuário ou e-mail</label>
+            <input type="text" id="esqueci-identificador" required
+                   autocapitalize="off" spellcheck="false" autocomplete="username">
+
+            <button type="submit" class="btn btn-primary" id="btn-esqueci-admin">
+                Enviar link
+            </button>
+        </form>
+
+        <p style="text-align:center;margin:14px 0 0;font-size:14px;">
+            <a href="#" onclick="return voltarLoginAdmin()" style="color:#1e3a8a;">
+                ← Voltar para entrar
+            </a>
+        </p>
+
+        <div id="esqueci-erro" class="msg-erro"></div>
+
+        <p style="margin:16px 0 0;padding:11px;background:#fef3c7;border-radius:6px;
+                  font-size:12.5px;color:#78350f;line-height:1.5;">
+            Se você nunca cadastrou um e-mail neste usuário, o link não tem para
+            onde ir. Nesse caso peça ao Master para redefinir sua senha pela aba
+            <strong>Usuários</strong> do painel.
+        </p>
     </div>
 </div>
 
@@ -366,6 +416,12 @@
                 <div>
                     <label>Usuário</label>
                     <input type="text" id="novo-usuario" required
+                           autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+                <div>
+                    <label>E-mail (obrigatório)</label>
+                    <input type="email" id="novo-email" required
+                           placeholder="para recuperar a senha"
                            autocomplete="off" autocapitalize="off" spellcheck="false">
                 </div>
                 <div>

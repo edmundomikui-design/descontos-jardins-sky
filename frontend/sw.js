@@ -8,7 +8,10 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
-const CACHE = 'cajsky-v12';
+// v13: entrou o "Esqueci minha senha". Sem trocar este número, quem já tem o
+// app instalado continuaria abrindo o index.html e o app-v2.js guardados —
+// ou seja, a tela de login sem o link novo.
+const CACHE = 'cajsky-v13';
 
 const ESSENCIAIS = [
     '/',
@@ -52,6 +55,11 @@ self.addEventListener('fetch', evento => {
     // Chamadas de API nunca entram no cache: preço e saldo de cupom
     // desatualizados dariam informação errada na pista.
     if (req.url.includes('/api/')) return;
+
+    // A página de redefinir senha também fica de fora. Ela é aberta por um
+    // link de e-mail com um token de uso único: guardar a resposta de um
+    // token no cache é pedir para o link seguinte abrir a tela do anterior.
+    if (req.url.includes('/redefinir-senha')) return;
 
     evento.respondWith(
         // "no-store" ignora qualquer cópia guardada pelo próprio navegador

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1e3a8a">
+    <title>CAJ SKY — Criar nova senha</title>
+    <link rel="apple-touch-icon" href="/icons/cajsky-192.png">
+    <!-- Página aberta a partir de um link de e-mail: sem manifest e sem
+         service worker de propósito. Se o PWA guardasse esta tela em cache,
+         um link novo abriria a resposta do link velho. -->
+    <meta name="robots" content="noindex">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: flex;
+            align-items: center; justify-content: center; padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+        }
+        .caixa {
+            background: #fff; border-radius: 14px; padding: 30px 26px;
+            width: 100%; max-width: 420px;
+            box-shadow: 0 12px 34px rgba(0,0,0,.25);
+        }
+        .marca { text-align: center; margin-bottom: 22px; }
+        .marca h1 { margin: 0; font-size: 22px; color: #1e3a8a; }
+        .marca p { margin: 4px 0 0; font-size: 13px; color: #6b7280; }
+        h2 { margin: 0 0 6px; font-size: 18px; color: #111827; }
+        .sub { margin: 0 0 20px; font-size: 14px; color: #6b7280; line-height: 1.5; }
+        label { display: block; font-size: 13px; font-weight: 600;
+                color: #374151; margin-bottom: 6px; }
+        input[type=password] {
+            width: 100%; padding: 13px 12px; font-size: 16px;
+            border: 1.5px solid #d1d5db; border-radius: 8px; margin-bottom: 4px;
+        }
+        input[type=password]:focus { outline: none; border-color: #2563eb; }
+        .dica { font-size: 12px; color: #6b7280; margin: 0 0 16px; }
+        .btn {
+            width: 100%; padding: 14px; font-size: 16px; font-weight: 700;
+            color: #fff; background: #1e3a8a; border: none;
+            border-radius: 8px; cursor: pointer;
+        }
+        .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+        .msg { margin-top: 16px; padding: 12px; border-radius: 8px;
+               font-size: 14px; line-height: 1.5; display: none; }
+        .msg.erro { display: block; background: #fee2e2; color: #991b1b; }
+        .msg.ok   { display: block; background: #dcfce7; color: #14532d; }
+        .voltar { display: block; text-align: center; margin-top: 18px;
+                  font-size: 14px; color: #1e3a8a; text-decoration: none; }
+        .carregando { text-align: center; color: #6b7280; font-size: 14px; padding: 20px 0; }
+        .mostrar { display: flex; align-items: center; gap: 7px;
+                   font-size: 13px; color: #4b5563; margin: 2px 0 16px; cursor: pointer; }
+        .mostrar input { width: auto; margin: 0; }
+    </style>
+</head>
+<body>
+<div class="caixa">
+    <div class="marca">
+        <h1>⛽ CAJ SKY</h1>
+        <p>Combustível com desconto</p>
+    </div>
+
+    <div id="carregando" class="carregando">Conferindo o link…</div>
+
+    <!-- Link inválido/vencido: nem mostra o formulário. Deixar a pessoa
+         escolher uma senha para só depois dizer que o link venceu é a
+         forma mais rápida de fazer alguém desistir. -->
+    <div id="bloco-invalido" style="display:none;">
+        <h2>Este link não vale mais</h2>
+        <p class="sub" id="texto-invalido"></p>
+        <a class="btn" id="btn-voltar-inv"
+           style="display:block;text-align:center;text-decoration:none;padding:14px;">
+            Pedir um link novo
+        </a>
+    </div>
+
+    <form id="bloco-form" style="display:none;" onsubmit="return salvar(event)">
+        <h2>Criar nova senha</h2>
+        <p class="sub" id="saudacao"></p>
+
+        <label for="senha">Nova senha</label>
+        <input type="password" id="senha" autocomplete="new-password" required>
+        <p class="dica" id="dica-minimo"></p>
+
+        <label for="senha2">Repita a nova senha</label>
+        <input type="password" id="senha2" autocomplete="new-password" required>
+
+        <label class="mostrar">
+            <input type="checkbox" id="ver" onchange="alternarVer()">
+            Mostrar as senhas
+        </label>
+
+        <button type="submit" class="btn" id="btn-salvar">Salvar nova senha</button>
+        <div id="msg" class="msg"></div>
+    </form>
+
+    <div id="bloco-pronto" style="display:none;">
+        <h2>Senha alterada ✅</h2>
+        <p class="sub">
+            Pronto. Já pode entrar com a senha nova.
+            Enviamos um aviso para o seu e-mail confirmando a alteração.
+        </p>
+        <a class="btn" id="btn-entrar"
+           style="display:block;text-align:center;text-decoration:none;padding:14px;">
+            Ir para a tela de entrar
+        </a>
+    </div>
+
+    <a class="voltar" id="link-voltar" href="/">← Voltar</a>
+</div>
+
+<script>
+// Mesmo endereço de servidor que js/app-v2.js e js/admin.js usam.
+// Se um dia o backend mudar de endereço, os três precisam mudar juntos.
+const API = 'https://descontos-jardins-sky-1.onrender.com';
+
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('token') || '';
+const TIPO  = (params.get('tipo') === 'admin') ? 'admin' : 'cliente';
+
+// Para onde a pessoa volta depois: equipe vai para o painel, motorista
+// para a tela do app.
+const TELA_LOGIN = TIPO === 'admin' ? '/admin.html' : '/';
+let MINIMO = TIPO === 'admin' ? 8 : 6;
+
+document.getElementById('link-voltar').href = TELA_LOGIN;
+document.getElementById('btn-voltar-inv').href = TELA_LOGIN;
+document.getElementById('btn-entrar').href = TELA_LOGIN;
+
+function mostrar(id) {
+    ['carregando', 'bloco-invalido', 'bloco-form', 'bloco-pronto']
+        .forEach(b => document.getElementById(b).style.display = 'none');
+    document.getElementById(id).style.display = 'block';
+}
+
+function alternarVer() {
+    const t = document.getElementById('ver').checked ? 'text' : 'password';
+    document.getElementById('senha').type = t;
+    document.getElementById('senha2').type = t;
+}
+
+function erro(texto) {
+    const m = document.getElementById('msg');
+    m.className = 'msg erro';
+    m.textContent = texto;
+}
+
+// ---- 1. o link ainda vale? ----
+async function conferirLink() {
+    if (!TOKEN) {
+        document.getElementById('texto-invalido').textContent =
+            'O endereço veio incompleto. Abra o link direto do e-mail, sem copiar pela metade.';
+        mostrar('bloco-invalido');
+        return;
+    }
+
+    try {
+        const r = await fetch(
+            `${API}/api/auth/validar-reset?token=${encodeURIComponent(TOKEN)}&tipo=${TIPO}`);
+        const d = await r.json();
+
+        if (!r.ok || !d.valido) {
+            document.getElementById('texto-invalido').textContent =
+                d.erro || 'Este link já foi usado ou passou de 1 hora.';
+            mostrar('bloco-invalido');
+            return;
+        }
+
+        MINIMO = d.minimo_senha || MINIMO;
+        const nome = (d.nome || '').trim().split(' ')[0];
+        document.getElementById('saudacao').textContent = nome
+            ? `${nome}, escolha a senha que você vai usar de agora em diante.`
+            : 'Escolha a senha que você vai usar de agora em diante.';
+        document.getElementById('dica-minimo').textContent =
+            `Mínimo de ${MINIMO} caracteres.`;
+        mostrar('bloco-form');
+        document.getElementById('senha').focus();
+    } catch (e) {
+        // O servidor no plano Starter pode demorar na primeira chamada.
+        document.getElementById('texto-invalido').textContent =
+            'Não consegui falar com o servidor agora. Tente de novo em alguns segundos.';
+        mostrar('bloco-invalido');
+    }
+}
+
+// ---- 2. grava a senha nova ----
+async function salvar(ev) {
+    ev.preventDefault();
+    const senha  = document.getElementById('senha').value;
+    const senha2 = document.getElementById('senha2').value;
+    const botao  = document.getElementById('btn-salvar');
+
+    if (senha.length < MINIMO) {
+        erro(`A senha precisa ter ao menos ${MINIMO} caracteres.`);
+        return false;
+    }
+    if (senha !== senha2) {
+        erro('As duas senhas estão diferentes. Confira a digitação.');
+        return false;
+    }
+
+    botao.disabled = true;
+    botao.textContent = 'Salvando…';
+
+    try {
+        const r = await fetch(`${API}/api/auth/redefinir-senha`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: TOKEN, tipo: TIPO, senha_nova: senha })
+        });
+        const d = await r.json();
+
+        if (!r.ok) {
+            erro(d.erro || 'Não foi possível salvar.');
+            botao.disabled = false;
+            botao.textContent = 'Salvar nova senha';
+            return false;
+        }
+
+        mostrar('bloco-pronto');
+    } catch (e) {
+        erro('Não consegui falar com o servidor. Tente de novo em alguns segundos.');
+        botao.disabled = false;
+        botao.textContent = 'Salvar nova senha';
+    }
+    return false;
+}
+
+conferirLink();
+</script>
+</body>
+</html>
