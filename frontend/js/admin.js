@@ -26,6 +26,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('aviso-primeiro-acesso').style.display = 'block';
             document.getElementById('btn-entrar').textContent = 'Criar acesso Master';
             document.getElementById('form-login').dataset.modo = 'setup';
+            document.getElementById('campo-email-setup').style.display = 'block';
+            document.getElementById('login-email-setup').required = true;
         }
     } catch (e) {
         mostrarErroLogin('Não foi possível falar com o servidor. Ele pode estar iniciando — aguarde 1 minuto e recarregue.');
@@ -49,7 +51,10 @@ async function fazerLogin(evento) {
             const r = await fetch(`${API}/admin/setup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ usuario, senha })
+                body: JSON.stringify({
+                    usuario, senha,
+                    email: document.getElementById('login-email-setup').value.trim()
+                })
             });
             const d = await r.json();
 
@@ -57,6 +62,8 @@ async function fazerLogin(evento) {
 
             document.getElementById('form-login').dataset.modo = '';
             document.getElementById('aviso-primeiro-acesso').style.display = 'none';
+            document.getElementById('campo-email-setup').style.display = 'none';
+            document.getElementById('login-email-setup').required = false;
             mostrarErroLogin('✅ Acesso Master criado! Entre agora com esse usuário e senha.', true);
             botao.disabled = false;
             botao.textContent = 'Entrar';
@@ -92,6 +99,73 @@ function mostrarErroLogin(mensagem, sucesso = false) {
     el.textContent = mensagem;
     el.className = sucesso ? 'msg-erro sucesso' : 'msg-erro';
     el.style.display = 'block';
+}
+
+// ---------- Esqueci minha senha (equipe do painel) ----------
+//
+// Antes disto, quem esquecia a senha dependia de um Master estar disponível
+// para redefinir. Como havia um Master só, o Master esquecer a própria senha
+// significava perder o painel — sem saída nenhuma.
+
+function abrirEsqueciSenhaAdmin() {
+    document.getElementById('box-login').style.display = 'none';
+    document.getElementById('box-esqueci').style.display = 'block';
+
+    // Aproveita o usuário já digitado na tela de entrar.
+    const doLogin = document.getElementById('login-usuario').value.trim();
+    const campo = document.getElementById('esqueci-identificador');
+    if (doLogin) campo.value = doLogin;
+    campo.focus();
+    return false;
+}
+
+function voltarLoginAdmin() {
+    document.getElementById('box-esqueci').style.display = 'none';
+    document.getElementById('box-login').style.display = 'block';
+    const el = document.getElementById('esqueci-erro');
+    el.textContent = '';
+    el.style.display = 'none';
+    document.getElementById('form-esqueci-admin').style.display = 'block';
+    return false;
+}
+
+async function pedirLinkAdmin(evento) {
+    evento.preventDefault();
+
+    const identificador = document.getElementById('esqueci-identificador').value.trim();
+    const botao = document.getElementById('btn-esqueci-admin');
+    const msg = document.getElementById('esqueci-erro');
+
+    botao.disabled = true;
+    botao.textContent = 'Enviando...';
+    msg.style.display = 'none';
+
+    try {
+        const r = await fetch(`${API}/admin/esqueci-senha`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identificador })
+        });
+        const d = await r.json();
+
+        if (!r.ok) throw new Error(d.erro || 'Não foi possível enviar agora.');
+
+        msg.textContent = d.mensagem;
+        msg.className = 'msg-erro sucesso';
+        msg.style.display = 'block';
+        // Esconde o formulário: apertar de novo cairia na trava de 1 minuto
+        // do servidor e não mandaria nada, parecendo que falhou.
+        document.getElementById('form-esqueci-admin').style.display = 'none';
+    } catch (erro) {
+        msg.textContent = erro.message;
+        msg.className = 'msg-erro';
+        msg.style.display = 'block';
+    } finally {
+        botao.disabled = false;
+        botao.textContent = 'Enviar link';
+    }
+
+    return false;
 }
 
 function sair() {
@@ -1199,17 +1273,47 @@ async function carregarUsuarios() {
 
     try {
         const d = await api('/admin/usuarios');
-        container.innerHTML = `
+
+        // Usuários criados antes do e-mail existir. Enquanto estiverem sem
+        // e-mail, o "esqueci minha senha" deles não tem para onde mandar nada.
+        const semEmail = d.usuarios.filter(u => !u.email).length;
+
+        let alertas = '';
+        if (d.email_configurado === false) {
+            alertas += `
+                <div class="aviso-setup" style="background:#fee2e2;border-color:#fca5a5;">
+                    <strong>⚠️ O envio de e-mail não está configurado no servidor.</strong>
+                    <p>Enquanto não estiver, o "Esqueci minha senha" não envia nada —
+                    nem para a equipe, nem para os motoristas. Falta a variável
+                    <code>RESEND_API_KEY</code> no Render.</p>
+                </div>`;
+        }
+        if (semEmail > 0) {
+            alertas += `
+                <div class="aviso-setup">
+                    <strong>⚠️ ${semEmail} usuário(s) sem e-mail cadastrado.</strong>
+                    <p>Quem está sem e-mail não consegue recuperar a própria senha —
+                    só você, por aqui. Preencha no botão ✉️ de cada linha.</p>
+                </div>`;
+        }
+
+        container.innerHTML = alertas + `
             <table class="tabela">
-                <thead><tr><th>Usuário</th><th>Nome</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
+                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
                 <tbody>
                     ${d.usuarios.map(u => `
                         <tr>
                             <td><strong>${u.usuario}</strong></td>
                             <td>${u.nome}</td>
+                            <td>${u.email
+                                ? u.email
+                                : '<span style="color:#b45309;">⚠️ sem e-mail</span>'}</td>
                             <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
                             <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
                             <td>
+                                <button class="btn-mini" onclick="definirEmailUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', '${String(u.email || '').replace(/'/g, "\\'")}')">
+                                    ✉️ ${u.email ? 'Trocar e-mail' : 'Cadastrar e-mail'}
+                                </button>
                                 <button class="btn-mini" onclick="redefinirSenhaUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}')">
                                     🔑 Redefinir senha
                                 </button>
@@ -1224,6 +1328,33 @@ async function carregarUsuarios() {
         `;
     } catch (erro) {
         container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+// Preenche o e-mail de quem foi criado antes desta mudança — sem precisar
+// desativar e recriar o usuário, o que perderia o histórico de auditoria.
+async function definirEmailUsuario(usuarioId, nomeUsuario, emailAtual) {
+    const email = prompt(
+        `E-mail de "${nomeUsuario}":\n\n` +
+        `É para onde vai o link quando ele esquecer a senha. ` +
+        `Precisa ser um e-mail que só ele acessa.`,
+        emailAtual || '');
+
+    if (email === null) return;
+    if (!email.trim()) {
+        aviso('O e-mail não pode ficar em branco.', 'erro');
+        return;
+    }
+
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ email: email.trim() })
+        });
+        aviso(`✅ E-mail de ${nomeUsuario} salvo.`);
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
     }
 }
 
@@ -1261,6 +1392,7 @@ async function criarUsuario(evento) {
             body: JSON.stringify({
                 nome: document.getElementById('novo-nome').value.trim(),
                 usuario: document.getElementById('novo-usuario').value.trim(),
+                email: document.getElementById('novo-email').value.trim(),
                 senha: document.getElementById('nova-senha').value,
                 nivel: document.getElementById('novo-nivel').value
             })

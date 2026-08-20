@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     } else {
         setupLoginForm();
+        setupEsqueciForm();
     }
 
     const agora = new Date().toLocaleDateString('pt-BR');
@@ -137,17 +138,83 @@ async function salvarPlaca() {
 }
 
 // ===== AUTENTICAÇÃO =====
-function toggleTab() {
-    const loginTab = document.getElementById('login-tab');
-    const cadastroTab = document.getElementById('cadastro-tab');
 
-    loginTab.classList.toggle('active');
-    cadastroTab.classList.toggle('active');
-
-    document.getElementById('login-erro').textContent = '';
-    document.getElementById('cadastro-erro').textContent = '';
-
+// São três abas na mesma tela agora: entrar, cadastrar e esqueci a senha.
+// Alternar por toggle só funcionava com duas — com três, uma delas ficava
+// visível junto com a outra.
+function mostrarAba(id) {
+    ['login-tab', 'cadastro-tab', 'esqueci-tab'].forEach(aba => {
+        const el = document.getElementById(aba);
+        if (el) el.classList.toggle('active', aba === id);
+    });
+    ['login-erro', 'cadastro-erro', 'esqueci-msg'].forEach(m => {
+        const el = document.getElementById(m);
+        if (el) { el.textContent = ''; el.style.color = ''; }
+    });
     return false;
+}
+
+function toggleTab() {
+    const login = document.getElementById('login-tab');
+    return mostrarAba(login && login.classList.contains('active')
+        ? 'cadastro-tab' : 'login-tab');
+}
+
+function abrirEsqueciSenha() {
+    // Já digitou o e-mail no login e a senha não entrou? Aproveita o que
+    // ele escreveu em vez de pedir de novo.
+    const doLogin = document.getElementById('login-email');
+    const doEsqueci = document.getElementById('esqueci-email');
+    if (doLogin && doEsqueci && doLogin.value) doEsqueci.value = doLogin.value;
+    mostrarAba('esqueci-tab');
+    if (doEsqueci) doEsqueci.focus();
+    return false;
+}
+
+function voltarAoLogin() {
+    return mostrarAba('login-tab');
+}
+
+function setupEsqueciForm() {
+    const form = document.getElementById('esqueci-form');
+    if (!form) return;
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = (document.getElementById('esqueci-email').value || '').trim();
+        const botao = document.getElementById('btn-esqueci');
+        const msg = document.getElementById('esqueci-msg');
+
+        botao.disabled = true;
+        botao.textContent = 'Enviando…';
+        msg.style.color = '';
+        msg.textContent = '';
+
+        try {
+            const r = await fetch(`${API_BASE_URL}/auth/esqueci-senha`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            const d = await r.json();
+
+            if (!r.ok) {
+                msg.textContent = d.erro || 'Não foi possível enviar agora.';
+            } else {
+                msg.style.color = '#15803d';
+                msg.textContent = d.mensagem;
+                // Some o formulário: se continuasse na tela, ele apertaria de
+                // novo achando que não foi, e a trava do servidor engoliria o
+                // segundo pedido sem mandar nada.
+                form.style.display = 'none';
+            }
+        } catch (err) {
+            msg.textContent = 'Não consegui falar com o servidor. Tente de novo em alguns segundos.';
+        } finally {
+            botao.disabled = false;
+            botao.textContent = 'Enviar link';
+        }
+    });
 }
 
 function setupLoginForm() {
