@@ -12,7 +12,11 @@ import os
 import sqlite3
 from datetime import date, datetime, time
 
-DB_PATH = "descontos_jardins_sky.db"
+# Em produção quem manda é o DATABASE_URL (PostgreSQL do Render). Este
+# caminho é só o banco local de desenvolvimento — e fica configurável para
+# os testes rodarem num arquivo temporário, sem risco de encostar no banco
+# de trabalho de quem está mexendo no código.
+DB_PATH = os.environ.get("DATABASE_PATH", "descontos_jardins_sky.db")
 DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 USANDO_POSTGRES = bool(DATABASE_URL)
 
@@ -160,6 +164,9 @@ def _schema(pg):
             foto_comprovante TEXT,
             foto_comprovante_tipo TEXT,
             data_foto_comprovante TEXT,
+            reset_token_hash TEXT,
+            reset_expira TEXT,
+            reset_pedido_em TEXT,
             data_criacao TIMESTAMP DEFAULT {agora},
             data_atualizacao TIMESTAMP DEFAULT {agora}
         )''',
@@ -253,6 +260,10 @@ def _schema(pg):
             token_expira TEXT,
             nivel TEXT DEFAULT 'master',
             nome TEXT,
+            email TEXT,
+            reset_token_hash TEXT,
+            reset_expira TEXT,
+            reset_pedido_em TEXT,
             ativo INTEGER DEFAULT 1,
             data_criacao TIMESTAMP DEFAULT {agora}
         )''',
@@ -325,6 +336,16 @@ COLUNAS_NOVAS = {
         ('aprovado_por', 'TEXT', 'TEXT'),
         ('data_aprovacao', 'TEXT', 'TEXT'),
         ('motivo_recusa', 'TEXT', 'TEXT'),
+        # Recuperação de senha ("esqueci minha senha").
+        #
+        # Guardamos o HASH do token, nunca o token em si. Se um dia alguém
+        # puser os olhos no banco — backup vazado, print de tela, consulta de
+        # suporte — o que estiver lá não serve para entrar em conta nenhuma.
+        # É a mesma razão de a senha ser hash: o banco não guarda segredo
+        # utilizável.
+        ('reset_token_hash', 'TEXT', 'TEXT'),
+        ('reset_expira', 'TEXT', 'TEXT'),
+        ('reset_pedido_em', 'TEXT', 'TEXT'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
@@ -356,6 +377,17 @@ COLUNAS_NOVAS = {
         ('nivel', "TEXT DEFAULT 'master'", "TEXT DEFAULT 'master'"),
         ('nome', 'TEXT', 'TEXT'),
         ('ativo', 'INTEGER DEFAULT 1', 'INTEGER DEFAULT 1'),
+        # E-mail do usuário do painel. Obrigatório para quem for criado de
+        # agora em diante; quem já existia entra sem e-mail e aparece com
+        # aviso na aba Usuários até o Master preencher.
+        #
+        # Sem isto, um usuário do painel que esquecesse a senha só podia ser
+        # destravado por outro Master — e havia um Master só. Esquecer a senha
+        # significava perder o painel inteiro.
+        ('email', 'TEXT', 'TEXT'),
+        ('reset_token_hash', 'TEXT', 'TEXT'),
+        ('reset_expira', 'TEXT', 'TEXT'),
+        ('reset_pedido_em', 'TEXT', 'TEXT'),
     ],
 }
 

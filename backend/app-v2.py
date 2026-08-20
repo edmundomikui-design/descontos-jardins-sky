@@ -9,8 +9,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import os
 import re
+import hashlib
+import secrets
 
 from database import init_db, get_db
+from email_service import (
+    enviar_link_recuperacao,
+    enviar_aviso_senha_alterada,
+    email_configurado,
+)
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -653,6 +660,298 @@ def login():
 
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
+
+# ==================== RECUPERAÇÃO DE SENHA ====================
+#
+# Vale para os dois públicos, com a mesma mecânica e tabelas diferentes:
+#
+#   - motorista  (tabela clientes) — entra por e-mail
+#   - equipe     (tabela admin)    — entra por nome de usuário, e-mail à parte
+#
+# Três regras que valem para os dois e não são detalhe:
+#
+# 1. O banco guarda o HASH do token, nunca o token. O link vai por e-mail e
+#    some dali; quem olhar o banco depois não acha nada aproveitável.
+#
+# 2. A resposta é sempre a mesma, exista o cadastro ou não. Se dissesse
+#    "e-mail não encontrado", qualquer um descobriria quem é cliente do posto
+#    testando e-mails na tela — dado de cliente vazando de graça.
+#
+# 3. Redefinir a senha derruba a sessão aberta. Se alguém entrou com a senha
+#    antiga, a redefinição expulsa essa pessoa, que é justamente o que se
+#    espera de "esqueci a senha" quando a conta foi tomada.
+
+RESET_VALIDADE_MIN = 60      # o link vale 1 hora
+RESET_INTERVALO_SEG = 60     # espera mínima entre dois pedidos do mesmo cadastro
+
+# Resposta única do pedido de link — ver regra 2 acima.
+_RESPOSTA_GENERICA = ('Se este cadastro existir, o link para criar uma nova senha '
+                      'foi enviado para o e-mail cadastrado. Confira também a '
+                      'caixa de spam.')
+
+
+def _hash_token(token):
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _gerar_token():
+    """Token aleatório de verdade (secrets, não random)."""
+    return secrets.token_urlsafe(32)
+
+
+def _agora():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _pediu_agora_ha_pouco(pedido_em):
+    """
+    Trava simples contra alguém ficar apertando 'enviar' e enchendo a caixa
+    de e-mail de outra pessoa — e contra gastar a cota de envio à toa.
+    """
+    if not pedido_em:
+        return False
+    try:
+        anterior = datetime.strptime(pedido_em, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return False
+    return (datetime.now() - anterior).total_seconds() < RESET_INTERVALO_SEG
+
+
+def _gravar_pedido_reset(cursor, tabela, registro_id, token):
+    expira = (datetime.now() + timedelta(minutes=RESET_VALIDADE_MIN)
+              ).strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute(
+        f'UPDATE {tabela} SET reset_token_hash = ?, reset_expira = ?, '
+        f'reset_pedido_em = ? WHERE id = ?',
+        (_hash_token(token), expira, _agora(), registro_id))
+
+
+def _buscar_por_token(cursor, tabela, campos, token):
+    """
+    Acha o dono de um token válido. Devolve o registro ou None.
+    Confere as três coisas: existe, não expirou, não foi usado.
+    """
+    cursor.execute(
+        f'SELECT {campos}, reset_expira FROM {tabela} WHERE reset_token_hash = ?',
+        (_hash_token(token),))
+    registro = cursor.fetchone()
+    if not registro:
+        return None
+    if not registro['reset_expira'] or registro['reset_expira'] < _agora():
+        return None
+    return registro
+
+
+@app.route('/api/auth/esqueci-senha', methods=['POST'])
+def esqueci_senha_cliente():
+    """Motorista pede o link de redefinição, informando o e-mail do cadastro."""
+    try:
+        email = (request.get_json().get('email') or '').strip()
+
+        if not validar_email(email):
+            return jsonify({'erro': 'Digite um e-mail válido'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, nome, email, reset_pedido_em
+            FROM clientes WHERE LOWER(email) = LOWER(?)
+        ''', (email,))
+        cliente = cursor.fetchone()
+
+        # Cadastro inexistente: responde igual e não envia nada.
+        if not cliente:
+            conn.close()
+            return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+
+        if _pediu_agora_ha_pouco(cliente['reset_pedido_em']):
+            conn.close()
+            return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+
+        token = _gerar_token()
+        _gravar_pedido_reset(cursor, 'clientes', cliente['id'], token)
+        conn.commit()
+        conn.close()
+
+        ok, erro = enviar_link_recuperacao(
+            cliente['email'], cliente['nome'], token,
+            tipo='cliente', validade_minutos=RESET_VALIDADE_MIN)
+
+        # Falha de envio é problema do posto, não do motorista: aí sim
+        # respondemos com erro, senão ele fica esperando um e-mail que nunca
+        # vai chegar.
+        if not ok:
+            return jsonify({'erro': erro}), 502
+
+        return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/esqueci-senha', methods=['POST'])
+def esqueci_senha_admin():
+    """
+    Usuário do painel pede o link. Aceita o nome de usuário OU o e-mail —
+    o frentista lembra do login, e nem sempre de qual e-mail cadastrou.
+    """
+    try:
+        identificador = (request.get_json().get('identificador') or '').strip()
+
+        if len(identificador) < 3:
+            return jsonify({'erro': 'Digite seu usuário ou seu e-mail'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, usuario, nome, email, ativo, reset_pedido_em
+            FROM admin
+            WHERE LOWER(usuario) = LOWER(?) OR LOWER(email) = LOWER(?)
+        ''', (identificador, identificador))
+        admin = cursor.fetchone()
+
+        # Não existe, está desativado, ou nunca teve e-mail preenchido:
+        # em todos os casos a resposta é a mesma e não sai e-mail nenhum.
+        if not admin or admin['ativo'] == 0 or not (admin['email'] or '').strip():
+            conn.close()
+            return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+
+        if _pediu_agora_ha_pouco(admin['reset_pedido_em']):
+            conn.close()
+            return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+
+        token = _gerar_token()
+        _gravar_pedido_reset(cursor, 'admin', admin['id'], token)
+        conn.commit()
+        conn.close()
+
+        ok, erro = enviar_link_recuperacao(
+            admin['email'], admin['nome'] or admin['usuario'], token,
+            tipo='admin', validade_minutos=RESET_VALIDADE_MIN)
+
+        if not ok:
+            return jsonify({'erro': erro}), 502
+
+        return jsonify({'mensagem': _RESPOSTA_GENERICA}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/auth/validar-reset', methods=['GET'])
+def validar_reset():
+    """
+    A tela pergunta se o link ainda vale, antes de deixar a pessoa digitar.
+    Sem isto ela escolhe uma senha nova, confirma e só então descobre que o
+    link tinha vencido — e ainda por cima não sabe se a senha mudou ou não.
+    """
+    try:
+        token = (request.args.get('token') or '').strip()
+        tipo = (request.args.get('tipo') or 'cliente').strip()
+
+        if not token:
+            return jsonify({'valido': False, 'erro': 'Link inválido'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        if tipo == 'admin':
+            registro = _buscar_por_token(cursor, 'admin', 'id, usuario, nome', token)
+            quem = (registro['nome'] or registro['usuario']) if registro else None
+        else:
+            registro = _buscar_por_token(cursor, 'clientes', 'id, nome', token)
+            quem = registro['nome'] if registro else None
+
+        conn.close()
+
+        if not registro:
+            return jsonify({
+                'valido': False,
+                'erro': 'Este link já foi usado ou passou de 1 hora. '
+                        'Peça um novo na tela de login.'
+            }), 400
+
+        return jsonify({
+            'valido': True,
+            'nome': quem,
+            'minimo_senha': 8 if tipo == 'admin' else 6,
+        }), 200
+    except Exception as e:
+        return jsonify({'valido': False, 'erro': str(e)}), 500
+
+
+@app.route('/api/auth/redefinir-senha', methods=['POST'])
+def redefinir_senha():
+    """Grava a senha nova. Serve motorista e equipe, conforme o 'tipo'."""
+    try:
+        data = request.get_json()
+        token = (data.get('token') or '').strip()
+        tipo = (data.get('tipo') or 'cliente').strip()
+        senha_nova = data.get('senha_nova') or ''
+
+        if not token:
+            return jsonify({'erro': 'Link inválido'}), 400
+
+        # A equipe mexe em preço e desconto, então a exigência é maior.
+        minimo = 8 if tipo == 'admin' else 6
+        if len(senha_nova) < minimo:
+            return jsonify({
+                'erro': f'A senha deve ter ao menos {minimo} caracteres'
+            }), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        if tipo == 'admin':
+            registro = _buscar_por_token(cursor, 'admin',
+                                         'id, usuario, nome, email', token)
+        else:
+            registro = _buscar_por_token(cursor, 'clientes', 'id, nome, email', token)
+
+        if not registro:
+            conn.close()
+            return jsonify({
+                'erro': 'Este link já foi usado ou passou de 1 hora. '
+                        'Peça um novo na tela de login.'
+            }), 400
+
+        senha_hash = generate_password_hash(senha_nova)
+
+        if tipo == 'admin':
+            # token = NULL derruba a sessão aberta (ver regra 3 no topo).
+            cursor.execute('''
+                UPDATE admin
+                SET senha_hash = ?, token = NULL, token_expira = NULL,
+                    reset_token_hash = NULL, reset_expira = NULL
+                WHERE id = ?
+            ''', (senha_hash, registro['id']))
+        else:
+            cursor.execute('''
+                UPDATE clientes
+                SET senha_hash = ?, reset_token_hash = NULL, reset_expira = NULL
+                WHERE id = ?
+            ''', (senha_hash, registro['id']))
+
+        conn.commit()
+        conn.close()
+
+        # Aviso de que a senha mudou. Se falhar, a senha já foi trocada e a
+        # pessoa consegue entrar — não é motivo para devolver erro.
+        try:
+            destino = (registro['email'] or '').strip()
+            if destino:
+                enviar_aviso_senha_alterada(
+                    destino,
+                    registro['nome'] or (registro['usuario'] if tipo == 'admin' else ''),
+                    tipo=tipo)
+        except Exception as e:
+            print(f"⚠️ Senha redefinida, mas o aviso não saiu: {e}")
+
+        return jsonify({
+            'mensagem': 'Senha alterada. Já pode entrar com a senha nova.'
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
 
 # ==================== ROTAS DE PRODUTOS ====================
 
@@ -1417,11 +1716,21 @@ def admin_setup():
         data = request.get_json()
         usuario = (data.get('usuario') or '').strip()
         senha = data.get('senha') or ''
+        email = (data.get('email') or '').strip()
 
         if len(usuario) < 3:
             return jsonify({'erro': 'Usuário deve ter ao menos 3 caracteres'}), 400
         if len(senha) < 8:
             return jsonify({'erro': 'Senha deve ter ao menos 8 caracteres'}), 400
+        # O primeiro Master é justamente quem não tem ninguém acima para
+        # destravá-lo. Sem e-mail, esquecer a senha custaria o painel inteiro.
+        if not email:
+            return jsonify({
+                'erro': 'Informe o e-mail. Sem ele não há como recuperar este '
+                        'acesso se a senha for esquecida.'
+            }), 400
+        if not validar_email(email):
+            return jsonify({'erro': 'E-mail inválido'}), 400
 
         conn = get_db()
         cursor = conn.cursor()
@@ -1432,9 +1741,10 @@ def admin_setup():
             return jsonify({'erro': 'Já existe administrador cadastrado. Faça login.'}), 403
 
         cursor.execute(
-            'INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, ativo) VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, email, ativo) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
             (usuario, generate_password_hash(senha), data.get('poster_id') or 'AMBOS',
-             'master', data.get('nome') or usuario, 1)
+             'master', data.get('nome') or usuario, email, 1)
         )
         conn.commit()
         conn.close()
@@ -1532,20 +1842,26 @@ def admin_listar_usuarios():
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id, usuario, nome, nivel, poster_id, ativo, data_criacao
+            SELECT id, usuario, nome, email, nivel, poster_id, ativo, data_criacao
             FROM admin ORDER BY nivel, usuario
         ''')
         usuarios = cursor.fetchall()
         conn.close()
 
-        return jsonify({'usuarios': [{
-            'id': u['id'],
-            'usuario': u['usuario'],
-            'nome': u['nome'] or u['usuario'],
-            'nivel': u['nivel'] or 'master',
-            'poster_id': u['poster_id'],
-            'ativo': u['ativo'] if u['ativo'] is not None else 1
-        } for u in usuarios]}), 200
+        return jsonify({
+            # A tela usa isto para avisar quando o envio de e-mail não está
+            # configurado no servidor — senão o Master cadastraria os e-mails
+            # de todo mundo achando que a recuperação funciona.
+            'email_configurado': email_configurado(),
+            'usuarios': [{
+                'id': u['id'],
+                'usuario': u['usuario'],
+                'nome': u['nome'] or u['usuario'],
+                'email': (u['email'] or '').strip(),
+                'nivel': u['nivel'] or 'master',
+                'poster_id': u['poster_id'],
+                'ativo': u['ativo'] if u['ativo'] is not None else 1
+            } for u in usuarios]}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
@@ -1559,6 +1875,7 @@ def admin_criar_usuario():
         usuario = (data.get('usuario') or '').strip()
         senha = data.get('senha') or ''
         nivel = data.get('nivel') or 'caixa'
+        email = (data.get('email') or '').strip()
 
         if len(usuario) < 3:
             return jsonify({'erro': 'Usuário deve ter ao menos 3 caracteres'}), 400
@@ -1566,6 +1883,17 @@ def admin_criar_usuario():
             return jsonify({'erro': 'Senha deve ter ao menos 8 caracteres'}), 400
         if nivel not in ('master', 'gerencia', 'caixa'):
             return jsonify({'erro': "Nível deve ser 'master', 'gerencia' ou 'caixa'"}), 400
+
+        # E-mail obrigatório para usuário novo. É o único caminho de volta
+        # quando alguém esquece a senha: sem ele, destravar depende de outro
+        # Master estar disponível — e por muito tempo houve um Master só.
+        if not email:
+            return jsonify({
+                'erro': 'Informe o e-mail. É por ele que a pessoa recupera a '
+                        'senha se esquecer.'
+            }), 400
+        if not validar_email(email):
+            return jsonify({'erro': 'E-mail inválido'}), 400
 
         conn = get_db()
         cursor = conn.cursor()
@@ -1581,11 +1909,22 @@ def admin_criar_usuario():
                         f'(maiúsculas e minúsculas não diferenciam).'
             }), 400
 
+        # Dois usuários do painel com o mesmo e-mail quebrariam a recuperação:
+        # o link chegaria para um e serviria para outro.
+        cursor.execute('SELECT usuario FROM admin WHERE LOWER(email) = LOWER(?)', (email,))
+        email_repetido = cursor.fetchone()
+        if email_repetido:
+            conn.close()
+            return jsonify({
+                'erro': f'Este e-mail já está no usuário "{email_repetido["usuario"]}". '
+                        f'Cada pessoa precisa do seu próprio.'
+            }), 400
+
         cursor.execute('''
-            INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, ativo)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, email, ativo)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (usuario, generate_password_hash(senha), data.get('poster_id') or 'AMBOS',
-              nivel, data.get('nome') or usuario, 1))
+              nivel, data.get('nome') or usuario, email, 1))
 
         conn.commit()
         conn.close()
@@ -1636,6 +1975,32 @@ def admin_alterar_usuario(usuario_id):
                 return jsonify({'erro': 'A senha deve ter ao menos 8 caracteres'}), 400
             cursor.execute('UPDATE admin SET senha_hash = ?, token = NULL WHERE id = ?',
                            (generate_password_hash(data['senha_nova']), usuario_id))
+
+        # Preencher ou corrigir o e-mail. É por aqui que os usuários criados
+        # antes desta mudança ganham e-mail, sem precisar recriar ninguém.
+        if 'email' in data:
+            email = (data.get('email') or '').strip()
+            if not email:
+                conn.close()
+                return jsonify({'erro': 'O e-mail não pode ficar em branco'}), 400
+            if not validar_email(email):
+                conn.close()
+                return jsonify({'erro': 'E-mail inválido'}), 400
+            cursor.execute(
+                'SELECT usuario FROM admin WHERE LOWER(email) = LOWER(?) AND id <> ?',
+                (email, usuario_id))
+            repetido = cursor.fetchone()
+            if repetido:
+                conn.close()
+                return jsonify({
+                    'erro': f'Este e-mail já está no usuário "{repetido["usuario"]}". '
+                            f'Cada pessoa precisa do seu próprio.'
+                }), 400
+            # Trocar o e-mail invalida qualquer link de recuperação em aberto:
+            # o link antigo foi para o endereço antigo.
+            cursor.execute(
+                'UPDATE admin SET email = ?, reset_token_hash = NULL, '
+                'reset_expira = NULL WHERE id = ?', (email, usuario_id))
 
         conn.commit()
         conn.close()
