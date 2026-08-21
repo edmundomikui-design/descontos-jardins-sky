@@ -246,8 +246,210 @@ function trocarAba(nome) {
     if (nome === 'caixa') carregarCaixa();
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
+    if (nome === 'liberacoes') carregarLiberacoes();
     if (nome === 'cupons') abrirCuponsDoDia();
     else pararAutoCupons();   // não fica batendo na API numa aba que ninguém vê
+}
+
+// ===================== LIBERAR CUPOM EXTRA (só Master) =====================
+//
+// A regra normal: um cupom de combustível por dia, um de óleo a cada 7 dias,
+// contando a CATEGORIA e não o produto. Aqui o Master abre exceção.
+
+function escaparHtml(t) {
+    return String(t || '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function buscarClientes(evento) {
+    evento.preventDefault();
+    const termo = document.getElementById('busca-cliente').value.trim();
+    const erro = document.getElementById('busca-erro');
+    const alvo = document.getElementById('resultado-busca');
+
+    erro.textContent = '';
+    if (termo.length < 3) {
+        erro.textContent = 'Digite ao menos 3 caracteres.';
+        return false;
+    }
+
+    alvo.innerHTML = '<p class="carregando">Procurando...</p>';
+
+    try {
+        const d = await api(`/admin/clientes/buscar?q=${encodeURIComponent(termo)}`);
+
+        if (!d.clientes.length) {
+            alvo.innerHTML = '<p class="ajuda">Nenhum cliente encontrado com esse termo.</p>';
+            return false;
+        }
+
+        alvo.innerHTML = d.clientes.map(c => {
+            const comb = c.consumo.combustivel;
+            const oleo = c.consumo.oleo;
+
+            // O que o Master precisa saber antes de decidir: o cliente já usou
+            // o cupom da categoria hoje/nesta semana?
+            const linhaConsumo = (rotulo, info, quando) => {
+                if (!info.tem_cupom) {
+                    return `<span style="color:#2e7d32;">✅ ${rotulo}: disponível</span>`;
+                }
+                if (info.usado) {
+                    return `<span style="color:#c62828;">🚫 ${rotulo}: já usou
+                            (${escaparHtml(info.produto)}, ${quando})</span>`;
+                }
+                return `<span style="color:#e65100;">⏳ ${rotulo}: cupom gerado e
+                        ainda não usado (${escaparHtml(info.produto)})</span>`;
+            };
+
+            const fmt = data => data ? data.split('-').reverse().join('/') : '';
+
+            const pendentes = (c.liberacoes_pendentes || []).map(l =>
+                `<div style="background:#fff8e1;border-left:3px solid #ffb300;padding:8px 10px;
+                             margin-top:6px;font-size:13px;">
+                    🎟️ Já tem liberação de <strong>${escaparHtml(l.categoria)}</strong> em aberto
+                    — "${escaparHtml(l.motivo)}" (vale até ${fmt(l.validade)})
+                 </div>`).join('');
+
+            const situacao = c.status !== 'ativo'
+                ? `<span class="badge" style="background:#c62828;color:#fff;">${escaparHtml(c.status)}</span>`
+                : '';
+
+            return `
+            <div class="card" style="margin-top:12px;">
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <strong style="font-size:16px;">${escaparHtml(c.nome)}</strong> ${situacao}<br>
+                        <span class="ajuda">
+                            Placa <strong>${escaparHtml(c.placa) || '—'}</strong> ·
+                            CPF ${escaparHtml(c.cpf)} ·
+                            ${escaparHtml(c.ocupacao) || '—'}
+                            ${c.empresa_convenio ? '· ' + escaparHtml(c.empresa_convenio) : ''}
+                        </span>
+                    </div>
+                </div>
+
+                <div style="margin:12px 0;font-size:14px;line-height:1.9;">
+                    ${linhaConsumo('Combustível hoje', comb, fmt(comb.data))}<br>
+                    ${linhaConsumo('Óleo nos últimos 7 dias', oleo, fmt(oleo.data))}
+                </div>
+
+                ${pendentes}
+
+                <div style="border-top:1px solid #eee;margin-top:12px;padding-top:12px;">
+                    <label style="font-size:13px;font-weight:600;">
+                        Motivo da liberação (obrigatório)
+                    </label>
+                    <input type="text" id="motivo-${c.id}" maxlength="200"
+                           placeholder="Ex.: motorista fez viagem longa, cortesia por reclamação"
+                           style="width:100%;padding:10px;margin:6px 0 10px;font-size:14px;
+                                  border:1.5px solid #d1d5db;border-radius:6px;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'combustivel')">
+                            ⛽ Liberar 1 combustível
+                        </button>
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'oleo')">
+                            🛢️ Liberar 1 óleo
+                        </button>
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'qualquer')">
+                            🎟️ Liberar 1 de qualquer um
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+    return false;
+}
+
+async function liberarExtra(clienteId, categoria) {
+    const campo = document.getElementById(`motivo-${clienteId}`);
+    const motivo = (campo?.value || '').trim();
+
+    if (motivo.length < 5) {
+        aviso('Escreva o motivo da liberação antes de liberar.', 'erro');
+        campo?.focus();
+        return;
+    }
+
+    try {
+        const d = await api('/admin/liberacoes', {
+            method: 'POST',
+            body: JSON.stringify({ cliente_id: clienteId, categoria, motivo })
+        });
+        aviso(`✅ ${d.mensagem}`);
+        if (campo) campo.value = '';
+        carregarLiberacoes();
+        // Recarrega a busca para a ficha do cliente já mostrar a liberação
+        document.getElementById('busca-cliente')?.form?.requestSubmit();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
+}
+
+async function carregarLiberacoes() {
+    const abertas = document.getElementById('liberacoes-abertas');
+    const historico = document.getElementById('liberacoes-historico');
+    if (!abertas) return;
+
+    abertas.innerHTML = '<p class="carregando">Carregando...</p>';
+
+    try {
+        const d = await api('/admin/liberacoes');
+        const fmt = t => t ? String(t).split(' ')[0].split('-').reverse().join('/') : '';
+
+        abertas.innerHTML = d.abertas.length ? `
+            <table class="tabela">
+                <thead><tr><th>Cliente</th><th>Categoria</th><th>Motivo</th>
+                           <th>Liberado por</th><th>Vale até</th><th></th></tr></thead>
+                <tbody>
+                ${d.abertas.map(l => `
+                    <tr>
+                        <td><strong>${escaparHtml(l.cliente_nome)}</strong><br>
+                            <span class="ajuda">${escaparHtml(l.placa) || ''}</span></td>
+                        <td>${escaparHtml(l.categoria_nome)}</td>
+                        <td>${escaparHtml(l.motivo)}</td>
+                        <td>${escaparHtml(l.liberado_por)}</td>
+                        <td>${fmt(l.validade)}</td>
+                        <td><button class="btn-mini" onclick="cancelarLiberacao(${l.id})">
+                            Cancelar</button></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`
+            : '<p class="ajuda">Nenhuma liberação em aberto.</p>';
+
+        historico.innerHTML = d.historico.length ? `
+            <table class="tabela">
+                <thead><tr><th>Cliente</th><th>Categoria</th><th>Motivo</th>
+                           <th>Liberado por</th><th>Situação</th></tr></thead>
+                <tbody>
+                ${d.historico.map(l => `
+                    <tr>
+                        <td>${escaparHtml(l.cliente_nome)}</td>
+                        <td>${escaparHtml(l.categoria_nome)}</td>
+                        <td>${escaparHtml(l.motivo)}</td>
+                        <td>${escaparHtml(l.liberado_por)}</td>
+                        <td>${l.usada
+                            ? '✅ usada em ' + fmt(l.data_uso)
+                            : '⌛ expirou sem uso'}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`
+            : '<p class="ajuda">Nada por aqui ainda.</p>';
+    } catch (e) {
+        abertas.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+}
+
+async function cancelarLiberacao(id) {
+    try {
+        const d = await api(`/admin/liberacoes/${id}/cancelar`, { method: 'POST' });
+        aviso(`✅ ${d.mensagem}`);
+        carregarLiberacoes();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
 }
 
 // ===================== CUPONS DO DIA (tela do caixa) =====================

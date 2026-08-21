@@ -680,7 +680,9 @@ async function compartilharQRCode() {
     }
 }
 
-async function gerarCupomProduto(produtoId, botao) {
+// `confirmarTroca` só vem preenchido quando o motorista já respondeu "sim" à
+// pergunta de trocar o cupom do dia por outro produto.
+async function gerarCupomProduto(produtoId, botao, confirmarTroca) {
     botao = botao || (typeof event !== 'undefined' && event ? event.target : null);
     const restaurarBotao = () => {
         if (botao) {
@@ -714,7 +716,8 @@ async function gerarCupomProduto(produtoId, botao) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 cliente_id: Number(clienteId),
-                produto_id: produtoId
+                produto_id: produtoId,
+                confirmar_troca: !!confirmarTroca
             }),
             signal: controller.signal
         });
@@ -727,11 +730,35 @@ async function gerarCupomProduto(produtoId, botao) {
         console.log('[cupom] status', response.status, data);
 
         if (response.ok) {
+            // Troca: o cupom antigo deixou de valer, então some da tela.
+            if (data.trocou) {
+                cuponsGerados = {};
+                if (typeof salvarCacheLocal === 'function') salvarCacheLocal();
+                carregarCuponsAtivos && carregarCuponsAtivos();
+            }
             data.produto_id = data.produto_id || produtoId;
             cuponsGerados[produtoId] = data;
             salvarCacheLocal();
             mostrarCupomGerado(data);
             renderizarProdutos();
+
+            if (data.usou_liberacao) {
+                mostrarAviso('✅ Cupom extra liberado pela gerência. Bom abastecimento!', 'ok');
+            }
+
+        // 409 = já existe um cupom do dia, ainda não usado, de outro produto.
+        // Dá para trocar. Perguntamos em vez de decidir por ele: o motorista
+        // pode ter gerado o certo e clicado no errado agora.
+        } else if (response.status === 409 && data.pode_trocar) {
+            restaurarBotao();
+            perguntarTroca(data, produtoId);
+
+        // 403 com limite_atingido = já usou o cupom da categoria na janela.
+        // Só a gerência libera.
+        } else if (response.status === 403 && data.limite_atingido) {
+            mostrarAviso(data.erro, 'limite');
+            restaurarBotao();
+
         } else {
             mostrarAviso(data.erro || `Erro ${response.status} ao gerar cupom`);
             restaurarBotao();
@@ -747,7 +774,11 @@ async function gerarCupomProduto(produtoId, botao) {
 }
 
 // Aviso sempre visível (aparece no topo da lista de produtos)
-function mostrarAviso(mensagem) {
+//
+// `tipo` muda a cor e o tempo: erro é vermelho, 'ok' é verde, e 'limite' é
+// laranja e NÃO some sozinho — quando o motorista bate no limite do dia, ele
+// precisa poder ler com calma em vez de correr atrás de um aviso que sumiu.
+function mostrarAviso(mensagem, tipo) {
     let box = document.getElementById('cupom-erro');
     if (!box) {
         const lista = document.getElementById('produtos-lista');
@@ -756,10 +787,77 @@ function mostrarAviso(mensagem) {
         box.id = 'cupom-erro';
         lista.parentNode.insertBefore(box, lista);
     }
-    box.style.cssText = 'display:block;background:#ffebee;color:#c62828;padding:12px;border-radius:8px;margin:10px 0;font-size:14px;';
+
+    const cores = {
+        ok:     'background:#e8f5e9;color:#1b5e20;',
+        limite: 'background:#fff3e0;color:#e65100;',
+        erro:   'background:#ffebee;color:#c62828;',
+    };
+    box.style.cssText = 'display:block;padding:12px;border-radius:8px;margin:10px 0;'
+        + 'font-size:14px;line-height:1.5;' + (cores[tipo] || cores.erro);
     box.textContent = mensagem;
     box.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => { box.style.display = 'none'; }, 8000);
+
+    if (tipo !== 'limite') {
+        setTimeout(() => { box.style.display = 'none'; }, 8000);
+    }
+}
+
+// Pergunta se o motorista quer trocar o cupom do dia por outro produto.
+//
+// Vale só enquanto o frentista não deu baixa. Depois disso, o direito do dia
+// já foi usado e nem a troca resolve — aí só com liberação da gerência.
+function perguntarTroca(dados, produtoNovoId) {
+    let caixa = document.getElementById('caixa-troca');
+    if (!caixa) {
+        const lista = document.getElementById('produtos-lista');
+        if (!lista) {
+            // Sem lugar na tela para a caixa: cai no diálogo do navegador.
+            if (confirm(dados.mensagem)) gerarCupomProduto(produtoNovoId, null, true);
+            return;
+        }
+        caixa = document.createElement('div');
+        caixa.id = 'caixa-troca';
+        lista.parentNode.insertBefore(caixa, lista);
+    }
+
+    caixa.style.cssText = 'display:block;background:#fff8e1;border:2px solid #ffb300;'
+        + 'padding:16px;border-radius:10px;margin:12px 0;';
+    caixa.innerHTML = `
+        <div style="font-size:15px;font-weight:700;color:#e65100;margin-bottom:6px;">
+            Você já tem um cupom hoje
+        </div>
+        <div style="font-size:14px;color:#444;line-height:1.5;margin-bottom:14px;">
+            Seu cupom de hoje é de <strong>${dados.cupom_atual_produto}</strong>.
+            Você tem direito a <strong>um cupom de combustível por dia</strong>.<br>
+            Quer trocar pelo de <strong>${dados.produto_novo}</strong>?
+            O de ${dados.cupom_atual_produto} deixa de valer.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button onclick="confirmarTrocaCupom(${produtoNovoId})"
+                    style="flex:1;min-width:140px;padding:12px;border:none;border-radius:8px;
+                           background:#e65100;color:#fff;font-size:15px;font-weight:700;
+                           cursor:pointer;">
+                Sim, trocar
+            </button>
+            <button onclick="fecharCaixaTroca()"
+                    style="flex:1;min-width:140px;padding:12px;border:1.5px solid #bbb;
+                           border-radius:8px;background:#fff;color:#444;font-size:15px;
+                           cursor:pointer;">
+                Manter o atual
+            </button>
+        </div>`;
+    caixa.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function confirmarTrocaCupom(produtoId) {
+    fecharCaixaTroca();
+    gerarCupomProduto(produtoId, null, true);
+}
+
+function fecharCaixaTroca() {
+    const caixa = document.getElementById('caixa-troca');
+    if (caixa) caixa.style.display = 'none';
 }
 
 function mostrarCupomGerado(data) {

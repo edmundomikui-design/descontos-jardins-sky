@@ -20,9 +20,16 @@ const litros = v => (Number(v) || 0).toFixed(2).replace('.', ',') + ' L';
 const formatarPlaca = p => (!p || p.length !== 7) ? (p || '—') : p.slice(0, 3) + ' ' + p.slice(3);
 
 function mostrarTela(id) {
-    ['tela-login', 'tela-leitura', 'tela-cupom', 'tela-ok']
-        .forEach(t => el(t).hidden = (t !== id));
+    ['tela-login', 'tela-leitura', 'tela-cupom', 'tela-ok', 'tela-turno']
+        .forEach(t => { const e = el(t); if (e) e.hidden = (t !== id); });
     window.scrollTo(0, 0);
+}
+
+// Texto que vem do banco (nome do motorista, produto) nunca entra na página
+// sem passar por aqui — senão um nome com < ou > quebraria o comprovante.
+function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 function erro(id, mensagem) {
@@ -318,6 +325,7 @@ async function confirmar() {
 
 function exibirComprovante(d) {
     vibrar([60, 40, 60]);
+    ultimoComprovante = d;   // guardado para o botão de imprimir
 
     el('ok-valor').textContent = reais(d.valor_final);
     el('ok-cliente').textContent = d.cliente || '—';
@@ -342,6 +350,310 @@ function voltarParaLeitura() {
     el('codigo-manual').value = '';
     erro('leitura-erro', '');
     mostrarTela('tela-leitura');
+}
+
+// ============================================================
+// IMPRESSÃO
+// ============================================================
+//
+// O conteúdo é montado numa área escondida da própria página e o navegador
+// imprime só ela (ver @media print no CSS). Abrir outra janela seria mais
+// simples de escrever, mas o bloqueador de pop-up do celular barraria a
+// impressão sem dizer o motivo — e o frentista ficaria clicando à toa.
+
+let ultimoComprovante = null;   // guardado para o botão de imprimir
+
+const CABECALHO_POSTOS = {
+    CAJ: 'Posto CAJ — R. Estados Unidos, 1930 — Jardins, São Paulo',
+    SKY: 'Posto SKY — R. Estados Unidos, 1776 — Jardins, São Paulo',
+};
+
+function cabecalhoImpressao(titulo, posto, extra) {
+    const endereco = CABECALHO_POSTOS[posto] || 'Postos CAJ e SKY — Jardins, São Paulo';
+    return `
+    <div class="p-cabecalho">
+        <div>
+            <div class="p-marca">⛽ CAJ SKY</div>
+            <div class="p-sub">${esc(endereco)}</div>
+        </div>
+        <div class="p-meta">
+            <strong>${esc(titulo)}</strong><br>
+            ${esc(extra || '')}
+        </div>
+    </div>`;
+}
+
+function imprimirHtml(html, classeExtra) {
+    const area = el('area-impressao');
+    area.className = classeExtra || '';
+    area.innerHTML = html;
+    // Um respiro antes de imprimir: sem isso, o navegador às vezes dispara a
+    // impressão com a área ainda vazia e sai folha em branco.
+    setTimeout(() => window.print(), 120);
+}
+
+function imprimirComprovante() {
+    if (!ultimoComprovante) return;
+    const d = ultimoComprovante;
+    const agora = new Date().toLocaleString('pt-BR');
+
+    imprimirHtml(`
+    <div class="p-comprovante">
+        ${cabecalhoImpressao('Comprovante de desconto', d.posto, agora)}
+
+        <div class="p-titulo">Abastecimento com desconto CAJ SKY</div>
+
+        <div class="p-linha"><span>Motorista</span><strong>${esc(d.cliente)}</strong></div>
+        <div class="p-linha"><span>Placa</span><strong>${esc(formatarPlaca(d.placa))}</strong></div>
+        <div class="p-linha"><span>Combustível</span><strong>${esc(d.produto)}</strong></div>
+        <div class="p-linha"><span>Quantidade</span><strong>${litros(d.quantidade)}</strong></div>
+        <div class="p-linha"><span>Cupom</span><strong>${esc(d.cupom || '—')}</strong></div>
+        <div class="p-linha"><span>Atendente</span><strong>${esc(sessao ? sessao.nome : '')}</strong></div>
+
+        <div class="p-totais">
+            <div class="p-linha"><span>Valor sem desconto</span><span>${reais(d.valor_original)}</span></div>
+            <div class="p-linha"><span>Desconto CAJ SKY</span><span>− ${reais(d.valor_desconto)}</span></div>
+            <div class="p-linha forte"><span>Valor pago</span><span>${reais(d.valor_final)}</span></div>
+        </div>
+
+        <div class="p-rodape">
+            Você economizou ${reais(d.valor_desconto)} neste abastecimento.<br>
+            Este documento não substitui o cupom fiscal.
+        </div>
+
+        <div class="p-corte">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>
+    </div>`);
+}
+
+// ============================================================
+// MEU TURNO
+// ============================================================
+
+let turnoAtual = null;
+
+async function abrirTurno() {
+    pararCamera();
+    mostrarTela('tela-turno');
+    erro('turno-erro', '');
+    el('turno-lista').innerHTML = '<p class="turno-vazio">Carregando…</p>';
+    el('turno-por-produto').innerHTML = '';
+
+    try {
+        turnoAtual = await chamar('/frentista/turno');
+        desenharTurno(turnoAtual);
+    } catch (e) {
+        if (e.message !== 'sessao_expirada') erro('turno-erro', e.message);
+    }
+}
+
+function desenharTurno(d) {
+    const t = d.totais;
+
+    el('turno-operador').textContent = d.operador || '—';
+    el('turno-qtd').textContent = t.abastecimentos;
+    el('turno-litros').textContent = litros(t.litros);
+    el('turno-bruto').textContent = reais(t.bruto);
+    el('turno-desconto').textContent = '− ' + reais(t.desconto);
+    el('turno-liquido').textContent = reais(t.liquido);
+
+    const desde = d.turno_desde
+        ? 'Desde o fechamento anterior (' + formatarQuando(d.turno_desde) + ')'
+        : 'Desde o seu primeiro abastecimento';
+    el('turno-periodo').textContent = desde + ' até agora.';
+
+    // Sem movimento não há o que fechar — e o botão fica desligado para o
+    // frentista não achar que o sistema travou.
+    const btn = el('btn-fechar-turno');
+    btn.disabled = t.abastecimentos === 0;
+    btn.style.opacity = t.abastecimentos === 0 ? '.5' : '1';
+
+    if (!t.abastecimentos) {
+        el('turno-lista').innerHTML =
+            '<p class="turno-vazio">Nenhum abastecimento neste turno ainda.</p>';
+        el('turno-por-produto').innerHTML = '';
+        return;
+    }
+
+    el('turno-por-produto').innerHTML = `
+        <p class="turno-sub">Por combustível</p>
+        <table class="turno-tabela">
+            <tbody>
+            ${d.por_produto.map(p => `
+                <tr>
+                    <td>${esc(p.produto)} <span style="color:#94a3b8">(${p.vezes}×)</span></td>
+                    <td class="num">${litros(p.quantidade)}</td>
+                    <td class="num">${reais(p.liquido)}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>`;
+
+    el('turno-lista').innerHTML = `
+        <p class="turno-sub">Abastecimentos</p>
+        <table class="turno-tabela">
+            <thead>
+                <tr><th>Hora</th><th>Motorista / placa</th><th class="num">Litros</th>
+                    <th class="num">Recebido</th></tr>
+            </thead>
+            <tbody>
+            ${d.itens.map(i => `
+                <tr>
+                    <td>${esc(i.hora)}</td>
+                    <td>${esc(i.cliente)}<br>
+                        <span style="color:#94a3b8">${esc(formatarPlaca(i.placa))}</span></td>
+                    <td class="num">${litros(i.quantidade)}</td>
+                    <td class="num">${reais(i.liquido)}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>`;
+}
+
+function formatarQuando(iso) {
+    if (!iso) return '—';
+    const [data, hora] = String(iso).split(' ');
+    const [a, m, dia] = data.split('-');
+    return `${dia}/${m}/${a}` + (hora ? ' ' + hora.slice(0, 5) : '');
+}
+
+// Quanto maior a lista, menor a fonte — para o turno inteiro caber numa folha.
+//
+// Os degraus não são chute: foram medidos imprimindo em A4 com margem de 12mm
+// e conferindo quantas páginas saíam. O relatório tem um custo fixo de altura
+// (cabeçalho, resumo por combustível, totais e assinaturas) que come quase
+// metade da folha — por isso os limites são mais baixos do que a intuição diz.
+//
+// Medido de verdade: até 35 abastecimentos cabem numa folha. Acima disso,
+// nem a menor fonte resolve — e aí o relatório quebra em duas páginas de
+// propósito. Relatório ilegível é pior do que relatório em duas folhas.
+function classeCompacta(quantidade) {
+    if (quantidade <= 13) return '';
+    if (quantidade <= 20) return 'compacto-1';
+    if (quantidade <= 27) return 'compacto-2';
+    return 'compacto-3';
+}
+
+function htmlRelatorioTurno(d, fechado) {
+    const t = d.totais;
+    const titulo = fechado ? 'Fechamento de turno' : 'Turno em andamento';
+    const periodo = (d.turno_desde ? formatarQuando(d.turno_desde) : 'início')
+        + ' até ' + (fechado ? formatarQuando(d.fechado_em) : d.agora);
+
+    return `
+    ${cabecalhoImpressao(titulo, d.poster_id, d.agora)}
+
+    <div class="p-titulo">${esc(titulo)} — ${esc(d.operador)}</div>
+    <div class="p-sub" style="margin-bottom:10px;">
+        Período: ${esc(periodo)}
+        ${d.poster_id ? ' · Posto ' + esc(d.poster_id) : ''}
+        ${fechado && d.fechamento_id ? ' · Fechamento nº ' + d.fechamento_id : ''}
+    </div>
+
+    <table class="p-tabela">
+        <thead>
+            <tr>
+                <th>#</th><th>Hora</th><th>Motorista</th><th>Placa</th>
+                <th>Combustível</th><th class="num">Litros</th>
+                <th class="num">Sem desc.</th><th class="num">Desconto</th>
+                <th class="num">Recebido</th>
+            </tr>
+        </thead>
+        <tbody>
+        ${d.itens.map((i, n) => `
+            <tr>
+                <td>${n + 1}</td>
+                <td>${esc(i.hora)}</td>
+                <td>${esc(i.cliente)}</td>
+                <td>${esc(formatarPlaca(i.placa))}</td>
+                <td>${esc(i.produto)}</td>
+                <td class="num">${(i.quantidade).toFixed(2).replace('.', ',')}</td>
+                <td class="num">${(i.bruto).toFixed(2).replace('.', ',')}</td>
+                <td class="num">${(i.desconto).toFixed(2).replace('.', ',')}</td>
+                <td class="num">${(i.liquido).toFixed(2).replace('.', ',')}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>
+
+    <div class="p-titulo" style="font-size:12px;">Resumo por combustível</div>
+    <table class="p-tabela">
+        <thead>
+            <tr><th>Combustível</th><th class="num">Vezes</th>
+                <th class="num">Litros</th><th class="num">Recebido</th></tr>
+        </thead>
+        <tbody>
+        ${d.por_produto.map(p => `
+            <tr>
+                <td>${esc(p.produto)}</td>
+                <td class="num">${p.vezes}</td>
+                <td class="num">${(p.quantidade).toFixed(2).replace('.', ',')}</td>
+                <td class="num">${(p.liquido).toFixed(2).replace('.', ',')}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>
+
+    <div class="p-totais">
+        <div class="p-linha"><span>Abastecimentos</span><span>${t.abastecimentos}</span></div>
+        <div class="p-linha"><span>Litros vendidos</span><span>${(t.litros).toFixed(2).replace('.', ',')} L</span></div>
+        <div class="p-linha"><span>Valor sem desconto</span><span>${reais(t.bruto)}</span></div>
+        <div class="p-linha"><span>Desconto CAJ SKY concedido</span><span>− ${reais(t.desconto)}</span></div>
+        <div class="p-linha forte"><span>TOTAL RECEBIDO NO TURNO</span><span>${reais(t.liquido)}</span></div>
+    </div>
+
+    <div class="p-assinaturas">
+        <div>${esc(d.operador)} — atendente</div>
+        <div>Conferido por</div>
+    </div>
+
+    <div class="p-rodape">
+        Relatório gerado pelo sistema CAJ SKY em ${esc(d.agora)}.
+        ${fechado ? 'Turno encerrado.' : 'Turno ainda em andamento — os valores podem mudar.'}
+    </div>`;
+}
+
+function imprimirTurno() {
+    if (!turnoAtual || !turnoAtual.totais.abastecimentos) {
+        erro('turno-erro', 'Não há abastecimentos para imprimir neste turno.');
+        return;
+    }
+    imprimirHtml(htmlRelatorioTurno(turnoAtual, false),
+                 classeCompacta(turnoAtual.itens.length));
+}
+
+// ---------- fechamento ----------
+
+function confirmarFechamento() {
+    if (!turnoAtual || !turnoAtual.totais.abastecimentos) return;
+    const t = turnoAtual.totais;
+    const ok = confirm(
+        `Fechar o turno?\n\n` +
+        `${t.abastecimentos} abastecimento(s)\n` +
+        `${litros(t.litros)}\n` +
+        `Total recebido: ${reais(t.liquido)}\n\n` +
+        `O relatório será impresso e você sairá do sistema.`);
+    if (ok) fecharTurno();
+}
+
+async function fecharTurno() {
+    const botao = el('btn-fechar-turno');
+    botao.disabled = true;
+    botao.textContent = 'Fechando…';
+    erro('turno-erro', '');
+
+    try {
+        const d = await chamar('/frentista/fechar-turno', { method: 'POST' });
+
+        // Imprime primeiro, ainda com a sessão na mão. Se a impressora
+        // falhar, o turno já está fechado no servidor de qualquer forma —
+        // e o relatório pode ser reimpresso pelo painel, pela gerência.
+        imprimirHtml(htmlRelatorioTurno(d, true), classeCompacta(d.itens.length));
+
+        // Dá tempo de a janela de impressão abrir antes de derrubar a tela.
+        setTimeout(() => {
+            sair('Turno fechado. Entre de novo para começar o próximo.');
+        }, 1500);
+    } catch (e) {
+        if (e.message !== 'sessao_expirada') erro('turno-erro', e.message);
+        botao.disabled = false;
+        botao.textContent = '🔒 Fechar turno';
+    }
 }
 
 // ---------- início ----------
