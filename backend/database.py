@@ -222,7 +222,62 @@ def _schema(pg):
             preco_unitario {real} DEFAULT 0,
             desconto_unitario {real} DEFAULT 0,
             desconto_valor {real} DEFAULT 0,
-            desconto_tipo TEXT DEFAULT 'fixo'
+            desconto_tipo TEXT DEFAULT 'fixo',
+            categoria TEXT,
+            liberacao_id INTEGER,
+            trocado_por INTEGER,
+            data_cancelamento TEXT
+        )''',
+
+        # Fechamento de turno do frentista.
+        #
+        # O turno NÃO é definido pelo relógio: é tudo o que aquele frentista
+        # registrou desde o fechamento anterior dele até fechar de novo. Quem
+        # entra 5h e sai 13h30 tem um relatório só, em vez de ter o movimento
+        # partido em dois pela virada das 14h.
+        #
+        # Como isso é amarrado: cada abastecimento recebe o `fechamento_id`
+        # no momento em que o turno fecha. O turno aberto é simplesmente
+        # "meus abastecimentos ainda sem fechamento" — não depende de comparar
+        # horários, então relógio errado ou fuso trocado não bagunçam a conta.
+        f'''CREATE TABLE IF NOT EXISTS fechamentos_turno (
+            id {serial},
+            usuario TEXT NOT NULL,
+            nome TEXT,
+            poster_id TEXT,
+            aberto_em TEXT,
+            fechado_em TEXT NOT NULL,
+            total_abastecimentos INTEGER DEFAULT 0,
+            total_litros {real} DEFAULT 0,
+            total_bruto {real} DEFAULT 0,
+            total_desconto {real} DEFAULT 0,
+            total_liquido {real} DEFAULT 0
+        )''',
+
+        # Liberações extras dadas pelo Master.
+        #
+        # A regra normal é um cupom de combustível por dia e um de óleo por
+        # semana. Quando o Master abre exceção — motorista fez viagem longa,
+        # cliente reclamou de algo, o que for — a exceção nasce aqui, com
+        # motivo obrigatório e nome de quem liberou.
+        #
+        # É de uso único: assim que o cliente gera o cupom extra, a liberação
+        # é marcada como usada e não vale mais. Sem isso, "liberar uma vez"
+        # viraria "liberado para sempre" sem ninguém perceber.
+        f'''CREATE TABLE IF NOT EXISTS liberacoes_extras (
+            id {serial},
+            cliente_id INTEGER NOT NULL,
+            categoria TEXT NOT NULL,
+            motivo TEXT NOT NULL,
+            liberado_por TEXT NOT NULL,
+            data_liberacao TEXT NOT NULL,
+            validade TEXT NOT NULL,
+            usada INTEGER DEFAULT 0,
+            cupom_id INTEGER,
+            data_uso TEXT,
+            cancelada INTEGER DEFAULT 0,
+            cancelada_por TEXT,
+            data_cancelamento TEXT
         )''',
 
         f'''CREATE TABLE IF NOT EXISTS abastecimentos (
@@ -239,6 +294,7 @@ def _schema(pg):
             valor_desconto {real} NOT NULL,
             valor_final {real} NOT NULL,
             registrado_por TEXT,
+            fechamento_id INTEGER,
             timestamp TIMESTAMP DEFAULT {agora}
         )''',
 
@@ -357,6 +413,18 @@ COLUNAS_NOVAS = {
         ('desconto_unitario', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
         ('desconto_tipo', "TEXT DEFAULT 'fixo'", "TEXT DEFAULT 'fixo'"),
+        # Limite por categoria: um cupom de combustível por dia, um de óleo por
+        # semana. A categoria fica gravada no cupom em vez de ser consultada no
+        # produto na hora, porque o produto pode mudar de tipo depois — e aí o
+        # histórico passaria a contar errado.
+        ('categoria', 'TEXT', 'TEXT'),
+        # Qual liberação extra do Master permitiu este cupom (quando foi o caso)
+        ('liberacao_id', 'INTEGER', 'INTEGER'),
+        # Quando o cliente troca de produto antes de usar, o cupom antigo é
+        # cancelado e aponta para o novo. Guardar os dois lados deixa a troca
+        # visível no histórico, em vez de o cupom simplesmente sumir.
+        ('trocado_por', 'INTEGER', 'INTEGER'),
+        ('data_cancelamento', 'TEXT', 'TEXT'),
     ],
     'produtos': [
         ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
@@ -370,6 +438,10 @@ COLUNAS_NOVAS = {
         # motorista só abastece com um frentista específico dependeria de
         # cruzar a auditoria por data — frágil e sujeito a erro.
         ('registrado_por', 'TEXT', 'TEXT'),
+        # Em qual fechamento de turno este abastecimento entrou. Enquanto for
+        # NULO, ele pertence ao turno que está aberto. É o que define o turno
+        # do frentista sem depender do relógio.
+        ('fechamento_id', 'INTEGER', 'INTEGER'),
     ],
     'admin': [
         ('token', 'TEXT', 'TEXT'),

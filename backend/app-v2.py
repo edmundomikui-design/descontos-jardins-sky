@@ -13,6 +13,47 @@ import hashlib
 import secrets
 
 from database import init_db, get_db
+
+# ==================== FUSO HORÁRIO ====================
+#
+# O servidor do Render roda em UTC — três horas à frente de Brasília. Sem
+# corrigir isso, quatro coisas saem erradas:
+#
+#   - a hora impressa no comprovante do motorista
+#   - o turno do abastecimento (12h daqui vira 15h, cai no turno errado)
+#   - o "dia" do cupom, que passaria a virar às 21h em vez da meia-noite —
+#     ou seja, quem gerasse cupom às 21h30 de segunda estaria gastando o de
+#     terça, e o limite de um por dia seguiria esse dia deslocado
+#   - a data nos relatórios de fechamento de turno
+#
+# A correção fica no CÓDIGO, não numa variável de ambiente do Render. Se
+# dependesse de configuração, bastaria alguém recriar o serviço sem ela para
+# tudo voltar a errar em silêncio.
+
+try:
+    from zoneinfo import ZoneInfo
+    FUSO_BRASILIA = ZoneInfo('America/Sao_Paulo')
+except Exception:
+    # Se a base de fusos não estiver instalada no servidor, cai no
+    # deslocamento fixo. O Brasil não usa horário de verão desde 2019, então
+    # UTC-3 vale o ano inteiro — mas o certo continua sendo o ZoneInfo, que
+    # se ajusta sozinho caso o horário de verão volte.
+    from datetime import timezone
+    FUSO_BRASILIA = timezone(timedelta(hours=-3))
+
+
+def agora():
+    """
+    Data e hora de Brasília, SEM o fuso embutido.
+
+    Devolver "ingênuo" (sem fuso) é de propósito: o banco guarda datas como
+    texto simples e o resto do código compara e subtrai esses valores. Um
+    horário com fuso embutido quebraria essas contas — subtrair um horário
+    com fuso de outro sem fuso é erro em Python.
+    """
+    return datetime.now(FUSO_BRASILIA).replace(tzinfo=None)
+
+
 from email_service import (
     enviar_link_recuperacao,
     enviar_aviso_senha_alterada,
@@ -74,6 +115,56 @@ _PLACA_MERCOSUL = re.compile(r'^[A-Z]{3}[0-9][A-Z][0-9]{2}$')
 # várias vezes no dia por pouco volume. Trocar para False devolve o uso em
 # partes, sem mexer em mais nada.
 USO_UNICO = True
+
+# ==================== LIMITE DE CUPONS POR CATEGORIA ====================
+#
+# Antes desta regra a trava era POR PRODUTO por dia — o que na prática não
+# limitava nada: o mesmo cliente gerava cinco cupons de combustível no mesmo
+# dia (comum, aditivada, premium, etanol, diesel) e mais quatro de óleo.
+#
+# Agora o limite é POR CATEGORIA:
+#
+#   combustível → 1 cupom por dia, qualquer que seja o combustível
+#   óleo        → 1 cupom a cada 7 dias, qualquer que seja o óleo
+#
+# O intervalo do óleo conta 7 dias corridos desde o último cupom, e não a
+# semana do calendário. É mais justo (quem pegou no sábado não ganha outro na
+# segunda) e mais fácil de explicar na pista: "sete dias depois do último".
+#
+# Duas saídas para o cliente que esbarra na regra:
+#
+#   - Se o cupom do dia ainda NÃO foi usado, ele pode trocar de produto. O
+#     antigo é cancelado e sai o novo. Sem isso, um toque errado no celular
+#     custaria o desconto do dia inteiro e cairia no colo do frentista.
+#   - Se já foi usado, só com liberação extra do Master (uso único, com
+#     motivo, registrada na auditoria).
+
+INTERVALO_DIAS = {
+    'combustivel': 1,   # um por dia
+    'oleo': 7,          # um por semana
+}
+
+# Nome que aparece nas mensagens para o cliente
+NOME_CATEGORIA = {
+    'combustivel': 'combustível',
+    'oleo': 'óleo',
+}
+
+# Quantos dias uma liberação do Master vale antes de expirar sozinha.
+# Sem prazo, uma liberação esquecida ficaria valendo para sempre.
+VALIDADE_LIBERACAO_DIAS = 7
+
+
+def categoria_do_produto(tipo):
+    """
+    Traduz o tipo do produto para a categoria do limite.
+
+    Qualquer coisa que não seja óleo entra como combustível — assim, se um
+    produto novo for cadastrado com um tipo que ninguém previu, ele cai na
+    regra mais restritiva em vez de ficar sem limite nenhum.
+    """
+    return 'oleo' if (tipo or '').strip().lower() == 'oleo' else 'combustivel'
+
 
 PERFIL_OCUPACAO = {
     'táxi':       {'registro': 'condutax', 'comprovante': 'licenca_taxi'},
@@ -215,7 +306,7 @@ def gerar_qrcode():
 def obter_turno(hora=None):
     """Retorna o turno baseado na hora"""
     if hora is None:
-        hora = datetime.now().hour
+        hora = agora().hour
 
     if 6 <= hora < 14:
         return "Turno 1 (6h-14h)"
@@ -244,7 +335,7 @@ def admin_do_token():
     if not admin or admin['ativo'] == 0:
         return None
 
-    if admin['token_expira'] and admin['token_expira'] < datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
+    if admin['token_expira'] and admin['token_expira'] < agora().strftime('%Y-%m-%d %H:%M:%S'):
         return None
 
     return admin
@@ -303,7 +394,7 @@ def registrar_auditoria(cursor, admin, acao, produto_id=None, produto_nome=None,
          produto_id, produto_nome, campo, valor_anterior, valor_novo, detalhe)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        agora().strftime('%Y-%m-%d %H:%M:%S'),
         admin['id'] if admin else None,
         admin['usuario'] if admin else None,
         admin['nivel'] if admin else None,
@@ -438,7 +529,7 @@ def cadastro():
             }), 400
 
         aceita_parceiros = 1 if marcado(data.get('aceita_parceiros')) else 0
-        agora_iso = datetime.now().isoformat()
+        agora_iso = agora().isoformat()
         data_consentimento = agora_iso
         data_consentimento_parceiros = agora_iso if aceita_parceiros else None
 
@@ -701,7 +792,7 @@ def _gerar_token():
 
 
 def _agora():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return agora().strftime('%Y-%m-%d %H:%M:%S')
 
 
 def _pediu_agora_ha_pouco(pedido_em):
@@ -715,11 +806,11 @@ def _pediu_agora_ha_pouco(pedido_em):
         anterior = datetime.strptime(pedido_em, '%Y-%m-%d %H:%M:%S')
     except ValueError:
         return False
-    return (datetime.now() - anterior).total_seconds() < RESET_INTERVALO_SEG
+    return (agora() - anterior).total_seconds() < RESET_INTERVALO_SEG
 
 
 def _gravar_pedido_reset(cursor, tabela, registro_id, token):
-    expira = (datetime.now() + timedelta(minutes=RESET_VALIDADE_MIN)
+    expira = (agora() + timedelta(minutes=RESET_VALIDADE_MIN)
               ).strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute(
         f'UPDATE {tabela} SET reset_token_hash = ?, reset_expira = ?, '
@@ -985,7 +1076,7 @@ def atualizar_placa():
             return jsonify({'erro': 'Cliente não encontrado'}), 404
 
         anterior = cliente['placa']
-        agora_iso = datetime.now().isoformat()
+        agora_iso = agora().isoformat()
 
         cursor.execute('UPDATE clientes SET placa = ?, data_placa = ? WHERE id = ?',
                        (placa, agora_iso, cliente_id))
@@ -999,7 +1090,7 @@ def atualizar_placa():
                  valor_anterior, valor_novo, detalhe)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                agora().strftime('%Y-%m-%d %H:%M:%S'),
                 f'cliente:{cliente_id}', 'cliente', 'troca_placa', 'placa',
                 anterior, placa, f'Cliente {cliente_id} trocou a placa do carro em uso'
             ))
@@ -1122,7 +1213,7 @@ def gerar_cupom():
 
         # Verifica produto (preço, desconto e limite vêm da tela de administrador)
         cursor.execute('''
-            SELECT id, nome, preco_atual, unidade, desconto_valor, desconto_tipo,
+            SELECT id, nome, tipo, preco_atual, unidade, desconto_valor, desconto_tipo,
                    limite_litros, preco_custo
             FROM produtos
             WHERE id = ? AND ativo = 1
@@ -1132,15 +1223,100 @@ def gerar_cupom():
         if not produto:
             return jsonify({'erro': 'Produto não encontrado'}), 404
 
-        # Verifica cupom ativo
-        hoje = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute('''
-            SELECT id FROM cupons
-            WHERE cliente_id = ? AND produto_id = ? AND data_geracao = ?
-        ''', (cliente_id, produto_id, hoje))
+        # ---- limite por categoria ----
+        #
+        # Um cupom de combustível por dia e um de óleo por semana, contando a
+        # categoria inteira e não o produto. Ver o bloco de constantes no topo.
+        hoje = agora().strftime('%Y-%m-%d')
+        categoria = categoria_do_produto(produto['tipo'])
+        intervalo = INTERVALO_DIAS[categoria]
+        desde = (agora() - timedelta(days=intervalo - 1)).strftime('%Y-%m-%d')
 
-        if cursor.fetchone():
-            return jsonify({'erro': f'Você já gerou um cupom para {produto["nome"]} hoje!'}), 400
+        # Cupons da mesma categoria dentro da janela. Cancelados não contam —
+        # cupom trocado antes de usar não pode consumir o direito do dia.
+        cursor.execute('''
+            SELECT c.id, c.status, c.data_geracao, c.qrcode,
+                   c.quantidade_permitida, c.quantidade_utilizada,
+                   p.nome AS produto_nome, p.id AS produto_id
+            FROM cupons c
+            LEFT JOIN produtos p ON p.id = c.produto_id
+            WHERE c.cliente_id = ?
+              AND COALESCE(c.categoria, CASE WHEN LOWER(p.tipo) = 'oleo'
+                                             THEN 'oleo' ELSE 'combustivel' END) = ?
+              AND c.data_geracao >= ?
+              AND COALESCE(c.status, '') <> 'cancelado'
+            ORDER BY c.id DESC
+        ''', (cliente_id, categoria, desde))
+        na_janela = cursor.fetchall()
+
+        if na_janela:
+            existente = na_janela[0]
+            ja_usado = (existente['status'] or '') in ('parcial', 'completo')
+
+            # Mesmo produto e ainda não usado: não é caso de troca nem de
+            # bloqueio — é o cliente reabrindo o cupom que já tem.
+            if not ja_usado and existente['produto_id'] == produto['id']:
+                conn.close()
+                return jsonify({
+                    'erro': f'Você já tem um cupom de {produto["nome"]} em aberto hoje. '
+                            f'Ele está na sua tela inicial.',
+                    'ja_tem': True,
+                    'qrcode_data': existente['qrcode']
+                }), 400
+
+            # Ainda não usado, produto diferente: pode trocar. Não gasta
+            # liberação nenhuma — o direito do dia continua sendo um só.
+            if not ja_usado:
+                if not data.get('confirmar_troca'):
+                    conn.close()
+                    return jsonify({
+                        'erro': f'Você já gerou um cupom de {existente["produto_nome"]} hoje.',
+                        'pode_trocar': True,
+                        'cupom_atual_id': existente['id'],
+                        'cupom_atual_produto': existente['produto_nome'],
+                        'produto_novo': produto['nome'],
+                        'mensagem': (f'Quer trocar o cupom de {existente["produto_nome"]} '
+                                     f'pelo de {produto["nome"]}? O anterior deixa de valer.')
+                    }), 409
+                # Confirmado: cancela o antigo mais abaixo, depois de saber o
+                # id do novo. Guarda a referência por enquanto.
+                cupom_a_cancelar = existente['id']
+            else:
+                cupom_a_cancelar = None
+
+            # Já usado dentro da janela: só passa com liberação do Master.
+            if ja_usado:
+                cursor.execute('''
+                    SELECT id, motivo, liberado_por FROM liberacoes_extras
+                    WHERE cliente_id = ? AND categoria IN (?, 'qualquer')
+                      AND usada = 0 AND cancelada = 0 AND validade >= ?
+                    ORDER BY id ASC
+                ''', (cliente_id, categoria, hoje))
+                liberacao = cursor.fetchone()
+
+                if not liberacao:
+                    conn.close()
+                    if categoria == 'oleo':
+                        proxima = (datetime.strptime(existente['data_geracao'], '%Y-%m-%d')
+                                   + timedelta(days=intervalo)).strftime('%d/%m/%Y')
+                        aviso = (f'Você já usou seu cupom de óleo. O próximo fica '
+                                 f'disponível em {proxima}.')
+                    else:
+                        aviso = ('Você já usou seu cupom de combustível hoje. '
+                                 'O próximo fica disponível amanhã.')
+                    return jsonify({
+                        'erro': aviso,
+                        'limite_atingido': True,
+                        'categoria': categoria,
+                        'produto_usado': existente['produto_nome']
+                    }), 403
+
+                liberacao_usada = liberacao['id']
+            else:
+                liberacao_usada = None
+        else:
+            cupom_a_cancelar = None
+            liberacao_usada = None
 
         # Desconto do produto; se ainda não configurado, cai no desconto do cliente
         desconto_valor = produto['desconto_valor'] or 0
@@ -1184,8 +1360,8 @@ def gerar_cupom():
             INSERT INTO cupons
             (cliente_id, produto_id, qrcode, data_geracao, quantidade_permitida,
              quantidade_utilizada, status, preco_unitario, desconto_unitario,
-             desconto_valor, desconto_tipo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             desconto_valor, desconto_tipo, categoria, liberacao_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cliente_id,
             produto_id,
@@ -1197,15 +1373,42 @@ def gerar_cupom():
             preco,
             desconto_por_unidade,
             desconto_valor,
-            desconto_tipo
+            desconto_tipo,
+            categoria,
+            liberacao_usada
         ))
 
-        conn.commit()
         cupom_id = cursor.lastrowid
+
+        # Troca confirmada: o cupom antigo é cancelado e passa a apontar para o
+        # novo. Cancelar em vez de apagar mantém a troca visível no histórico.
+        if cupom_a_cancelar:
+            cursor.execute('''
+                UPDATE cupons
+                SET status = 'cancelado', trocado_por = ?, data_cancelamento = ?
+                WHERE id = ? AND status = 'pendente'
+            ''', (cupom_id, agora().strftime('%Y-%m-%d %H:%M:%S'), cupom_a_cancelar))
+
+        # Liberação do Master é de uso único: gasta agora.
+        if liberacao_usada:
+            cursor.execute('''
+                UPDATE liberacoes_extras
+                SET usada = 1, cupom_id = ?, data_uso = ?
+                WHERE id = ?
+            ''', (cupom_id, agora().strftime('%Y-%m-%d %H:%M:%S'), liberacao_usada))
+            registrar_auditoria(
+                cursor, None, 'liberacao_extra_usada',
+                detalhe=(f'Cliente {cliente["nome"]} usou liberação extra de '
+                         f'{NOME_CATEGORIA[categoria]} no cupom #{cupom_id} '
+                         f'({produto["nome"]})'))
+
+        conn.commit()
         conn.close()
 
         return jsonify({
             'cupom_id': cupom_id,
+            'trocou': bool(cupom_a_cancelar),
+            'usou_liberacao': bool(liberacao_usada),
             'qrcode_data': qr_data,
             'qrcode_image': f'data:image/png;base64,{qr_image}',
             'cliente_nome': cliente['nome'],
@@ -1237,7 +1440,7 @@ def cupons_ativos():
         if not cliente_id:
             return jsonify({'erro': 'cliente_id é obrigatório'}), 400
 
-        hoje = datetime.now().date()
+        hoje = agora().date()
 
         conn = get_db()
         cursor = conn.cursor()
@@ -1257,6 +1460,7 @@ def cupons_ativos():
             FROM cupons c
             LEFT JOIN produtos p ON p.id = c.produto_id
             WHERE c.cliente_id = ? AND c.data_geracao = ?
+              AND COALESCE(c.status, '') <> 'cancelado'
             ORDER BY c.id DESC
         ''', (cliente_id, hoje))
         linhas = cursor.fetchall()
@@ -1363,7 +1567,7 @@ def consultar_cupom():
         restante = round(permitida - utilizada, 2)
 
         data_geracao = str(cupom['data_geracao'])[:10]
-        hoje = str(datetime.now().date())
+        hoje = str(agora().date())
 
         # Um único lugar decide se pode abastecer — a tela só exibe o motivo.
         if data_geracao != hoje:
@@ -1373,6 +1577,12 @@ def consultar_cupom():
             )
         elif cupom['cliente_status'] and cupom['cliente_status'] != 'ativo':
             valido, motivo = False, 'Cadastro do motorista está inativo.'
+        elif (cupom['status'] or '').lower() == 'cancelado':
+            # O motorista trocou este cupom por outro produto antes de usar.
+            # Sem esta mensagem, o frentista veria "cupom não vale" e não
+            # saberia que existe um novo válido no celular do motorista.
+            valido, motivo = False, ('Este cupom foi trocado por outro no aplicativo. '
+                                     'Peça ao motorista para mostrar o cupom atual.')
         elif (cupom['status'] or '').lower() == 'completo':
             # Com uso único o cupom fecha mesmo sobrando saldo. Quem manda é o
             # status, não a conta de litros — senão a tela mostraria "válido,
@@ -1455,7 +1665,7 @@ def usar_cupom():
 
         # Valida validade: cupom vale apenas no dia em que foi gerado
         data_geracao = str(cupom['data_geracao'])[:10]
-        if data_geracao != str(datetime.now().date()):
+        if data_geracao != str(agora().date()):
             conn.close()
             return jsonify({
                 'erro': f'Cupom expirado (gerado em {data_geracao}). O cliente deve gerar um novo cupom hoje.'
@@ -1468,7 +1678,7 @@ def usar_cupom():
 
         # Busca cliente e produto
         cursor.execute('''
-            SELECT nome, desconto_tipo, desconto_valor
+            SELECT nome, placa, desconto_tipo, desconto_valor
             FROM clientes
             WHERE id = ?
         ''', (cupom['cliente_id'],))
@@ -1547,7 +1757,7 @@ def usar_cupom():
         turno = obter_turno()
 
         # Registra abastecimento
-        agora = datetime.now()
+        momento = agora()
         cursor.execute('''
             INSERT INTO abastecimentos
             (cupom_id, cliente_id, produto_id, poster_id, data, hora, turno,
@@ -1558,8 +1768,8 @@ def usar_cupom():
             cupom['cliente_id'],
             produto_id,
             poster_id,
-            agora.strftime('%Y-%m-%d'),
-            agora.strftime('%H:%M:%S'),
+            momento.strftime('%Y-%m-%d'),
+            momento.strftime('%H:%M:%S'),
             turno,
             quantidade_agora,
             valor_sem_desconto,
@@ -1589,7 +1799,7 @@ def usar_cupom():
         ''', (
             nova_quantidade_utilizada,
             novo_status,
-            agora.strftime('%Y-%m-%d'),
+            momento.strftime('%Y-%m-%d'),
             turno,
             cupom['id']
         ))
@@ -1609,10 +1819,15 @@ def usar_cupom():
         return jsonify({
             'mensagem': 'Abastecimento registrado!',
             'cliente': cliente['nome'],
+            # Placa e código do cupom vão para o comprovante impresso: é o que
+            # liga o papel na mão do motorista ao registro no sistema, se
+            # alguém precisar conferir depois.
+            'placa': cliente['placa'],
+            'cupom': cupom['qrcode'],
             'produto': produto['nome'] if produto else 'N/A',
             'posto': poster_id,
             'registrado_por': request.admin['nome'] or request.admin['usuario'],
-            'hora': agora.strftime('%H:%M'),
+            'hora': momento.strftime('%H:%M'),
             'quantidade': quantidade_agora,
             'valor_original': round(valor_sem_desconto, 2),
             'valor_desconto': round(valor_desconto, 2),
@@ -1783,7 +1998,7 @@ def admin_login():
             return jsonify({'erro': 'Usuário desativado. Fale com o administrador Master.'}), 403
 
         token = str(uuid.uuid4())
-        expira = (datetime.now() + timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S')
+        expira = (agora() + timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute('UPDATE admin SET token = ?, token_expira = ? WHERE id = ?',
                        (token, expira, admin['id']))
         conn.commit()
@@ -2082,7 +2297,7 @@ def admin_atualizar_produtos():
 
         conn = get_db()
         cursor = conn.cursor()
-        agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        momento = agora().strftime('%Y-%m-%d %H:%M:%S')
         atualizados = []
 
         nivel = request.admin['nivel']
@@ -2190,7 +2405,7 @@ def admin_atualizar_produtos():
                     desconto_valor = ?, desconto_tipo = ?, limite_litros = ?,
                     ativo = ?, data_atualizacao = ?
                 WHERE id = ?
-            ''', (nome, preco, custo, margem, desconto, tipo, limite, ativo, agora, produto_id))
+            ''', (nome, preco, custo, margem, desconto, tipo, limite, ativo, momento, produto_id))
 
             preco_final = preco - por_unidade
             atualizados.append({
@@ -2301,7 +2516,7 @@ def admin_fechamento_caixa():
     Parâmetros: data (YYYY-MM-DD, padrão hoje), turno (opcional), poster_id (opcional)
     """
     try:
-        data_ref = request.args.get('data') or datetime.now().strftime('%Y-%m-%d')
+        data_ref = request.args.get('data') or agora().strftime('%Y-%m-%d')
         turno_filtro = request.args.get('turno')
         poster_id = request.args.get('poster_id')
         hora_inicio = request.args.get('hora_inicio')   # ex: 14:00
@@ -2547,7 +2762,7 @@ def admin_suspeitas():
     """
     try:
         dias = int(request.args.get('dias', 30))
-        limite = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%d')
+        limite = (agora() - timedelta(days=dias)).strftime('%Y-%m-%d')
 
         conn = get_db()
         cursor = conn.cursor()
@@ -2711,7 +2926,7 @@ def admin_cupons_do_dia():
     enxergar o movimento e achar um código depressa.
     """
     try:
-        data_ref = (request.args.get('data') or '').strip() or datetime.now().strftime('%Y-%m-%d')
+        data_ref = (request.args.get('data') or '').strip() or agora().strftime('%Y-%m-%d')
 
         conn = get_db()
         cursor = conn.cursor()
@@ -3092,7 +3307,7 @@ def admin_decidir_cadastro(cliente_id):
             }), 403
 
         novo_status = 'ativo' if decisao == 'aprovar' else 'recusado'
-        agora_iso = datetime.now().isoformat()
+        agora_iso = agora().isoformat()
 
         cursor.execute('''
             UPDATE clientes
@@ -3120,12 +3335,493 @@ def admin_decidir_cadastro(cliente_id):
         return jsonify({'erro': str(e)}), 500
 
 
+# ==================== TURNO DO FRENTISTA ====================
+#
+# O turno é "tudo o que ESTE frentista registrou desde o fechamento anterior
+# dele". Não é o relógio que manda: quem entra às 5h e sai às 13h30 tem um
+# relatório só, em vez de ter o movimento partido pela virada das 14h.
+#
+# O que amarra isso é o `fechamento_id` no abastecimento: enquanto for nulo,
+# o abastecimento pertence ao turno aberto. Assim a conta não depende de
+# comparar horários — relógio errado ou fuso trocado não bagunçam nada.
+
+def _resumo_turno(cursor, usuario):
+    """Monta a lista e os totais do turno aberto de um frentista."""
+    cursor.execute('''
+        SELECT a.id, a.data, a.hora, a.quantidade, a.valor_original,
+               a.valor_desconto, a.valor_final, a.poster_id,
+               p.nome AS produto_nome, p.unidade,
+               cl.nome AS cliente_nome, cl.placa,
+               c.qrcode
+        FROM abastecimentos a
+        LEFT JOIN produtos p ON p.id = a.produto_id
+        LEFT JOIN clientes cl ON cl.id = a.cliente_id
+        LEFT JOIN cupons c ON c.id = a.cupom_id
+        WHERE a.registrado_por = ? AND a.fechamento_id IS NULL
+        ORDER BY a.id ASC
+    ''', (usuario,))
+    linhas = cursor.fetchall()
+
+    itens, tot = [], {'litros': 0.0, 'bruto': 0.0, 'desconto': 0.0, 'liquido': 0.0}
+    por_produto = {}
+
+    for a in linhas:
+        itens.append({
+            'id': a['id'],
+            'data': a['data'],
+            'hora': (a['hora'] or '')[:5],
+            'cliente': a['cliente_nome'],
+            'placa': a['placa'],
+            'produto': a['produto_nome'],
+            'unidade': a['unidade'] or 'L',
+            'quantidade': round(a['quantidade'] or 0, 2),
+            'bruto': round(a['valor_original'] or 0, 2),
+            'desconto': round(a['valor_desconto'] or 0, 2),
+            'liquido': round(a['valor_final'] or 0, 2),
+            'posto': a['poster_id'],
+            'cupom': a['qrcode'],
+        })
+        tot['litros'] += a['quantidade'] or 0
+        tot['bruto'] += a['valor_original'] or 0
+        tot['desconto'] += a['valor_desconto'] or 0
+        tot['liquido'] += a['valor_final'] or 0
+
+        # Subtotal por combustível: é o que o frentista confere contra a bomba
+        # antes de entregar o caixa.
+        chave = a['produto_nome'] or '—'
+        linha = por_produto.setdefault(chave, {
+            'produto': chave, 'unidade': a['unidade'] or 'L',
+            'quantidade': 0.0, 'liquido': 0.0, 'vezes': 0})
+        linha['quantidade'] += a['quantidade'] or 0
+        linha['liquido'] += a['valor_final'] or 0
+        linha['vezes'] += 1
+
+    for linha in por_produto.values():
+        linha['quantidade'] = round(linha['quantidade'], 2)
+        linha['liquido'] = round(linha['liquido'], 2)
+
+    return {
+        'itens': itens,
+        'por_produto': sorted(por_produto.values(), key=lambda x: -x['liquido']),
+        'totais': {
+            'abastecimentos': len(itens),
+            'litros': round(tot['litros'], 2),
+            'bruto': round(tot['bruto'], 2),
+            'desconto': round(tot['desconto'], 2),
+            'liquido': round(tot['liquido'], 2),
+        },
+        'primeiro': itens[0] if itens else None,
+        'ultimo': itens[-1] if itens else None,
+    }
+
+
+@app.route('/api/frentista/turno', methods=['GET'])
+@exige_admin
+def frentista_turno():
+    """Resumo do turno aberto de quem está logado — para conferir e imprimir."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        resumo = _resumo_turno(cursor, request.admin['usuario'])
+
+        # Quando o turno atual começou: o fechamento anterior é a fronteira.
+        cursor.execute('''
+            SELECT fechado_em FROM fechamentos_turno
+            WHERE usuario = ? ORDER BY id DESC LIMIT 1
+        ''', (request.admin['usuario'],))
+        anterior = cursor.fetchone()
+        conn.close()
+
+        resumo['operador'] = request.admin['nome'] or request.admin['usuario']
+        resumo['usuario'] = request.admin['usuario']
+        resumo['poster_id'] = request.admin['poster_id']
+        resumo['turno_desde'] = anterior['fechado_em'] if anterior else None
+        resumo['agora'] = agora().strftime('%d/%m/%Y %H:%M')
+        return jsonify(resumo), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/frentista/fechar-turno', methods=['POST'])
+@exige_admin
+def frentista_fechar_turno():
+    """
+    Encerra o turno: carimba os abastecimentos, grava os totais e derruba a
+    sessão.
+
+    A sessão cair não é detalhe de tela — é a trava. Se o fechamento apenas
+    imprimisse um papel e a tela continuasse funcionando, um abastecimento
+    feito logo depois entraria no relatório seguinte sem ninguém perceber, e
+    a soma impressa deixaria de bater com o sistema. Aqui o token morre no
+    servidor: para continuar, é preciso entrar de novo, e o que vier depois
+    já é o turno seguinte.
+    """
+    try:
+        usuario = request.admin['usuario']
+        conn = get_db()
+        cursor = conn.cursor()
+
+        resumo = _resumo_turno(cursor, usuario)
+
+        if not resumo['itens']:
+            conn.close()
+            return jsonify({
+                'erro': 'Não há abastecimentos neste turno para fechar.'
+            }), 400
+
+        cursor.execute('''
+            SELECT fechado_em FROM fechamentos_turno
+            WHERE usuario = ? ORDER BY id DESC LIMIT 1
+        ''', (usuario,))
+        anterior = cursor.fetchone()
+        momento = agora().strftime('%Y-%m-%d %H:%M:%S')
+        t = resumo['totais']
+
+        cursor.execute('''
+            INSERT INTO fechamentos_turno
+            (usuario, nome, poster_id, aberto_em, fechado_em,
+             total_abastecimentos, total_litros, total_bruto,
+             total_desconto, total_liquido)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (usuario, request.admin['nome'] or usuario, request.admin['poster_id'],
+              anterior['fechado_em'] if anterior else None, momento,
+              t['abastecimentos'], t['litros'], t['bruto'],
+              t['desconto'], t['liquido']))
+        fechamento_id = cursor.lastrowid
+
+        # Carimba os abastecimentos deste turno. Daqui em diante eles não
+        # aparecem mais como "turno aberto".
+        cursor.execute('''
+            UPDATE abastecimentos SET fechamento_id = ?
+            WHERE registrado_por = ? AND fechamento_id IS NULL
+        ''', (fechamento_id, usuario))
+
+        registrar_auditoria(
+            cursor, request.admin, 'turno_fechado',
+            detalhe=(f'Turno fechado por {usuario}: {t["abastecimentos"]} '
+                     f'abastecimento(s), {t["litros"]:.2f} L, '
+                     f'R$ {t["liquido"]:.2f} recebidos'))
+
+        # A trava: o token morre aqui.
+        cursor.execute('UPDATE admin SET token = NULL, token_expira = NULL '
+                       'WHERE usuario = ?', (usuario,))
+
+        conn.commit()
+        conn.close()
+
+        resumo['fechamento_id'] = fechamento_id
+        resumo['fechado_em'] = momento
+        resumo['operador'] = request.admin['nome'] or usuario
+        resumo['usuario'] = usuario
+        resumo['poster_id'] = request.admin['poster_id']
+        resumo['turno_desde'] = anterior['fechado_em'] if anterior else None
+        resumo['agora'] = agora().strftime('%d/%m/%Y %H:%M')
+        resumo['mensagem'] = 'Turno fechado. Para continuar, entre de novo.'
+        return jsonify(resumo), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/fechamentos', methods=['GET'])
+@exige_admin
+def admin_listar_fechamentos():
+    """Turnos já fechados — para a gerência conferir contra o caixa."""
+    try:
+        data_ref = (request.args.get('data') or '').strip()
+        conn = get_db()
+        cursor = conn.cursor()
+
+        if data_ref:
+            cursor.execute('''
+                SELECT * FROM fechamentos_turno
+                WHERE SUBSTR(fechado_em, 1, 10) = ?
+                ORDER BY id DESC
+            ''', (data_ref,))
+        else:
+            cursor.execute('SELECT * FROM fechamentos_turno ORDER BY id DESC LIMIT 30')
+
+        linhas = cursor.fetchall()
+        conn.close()
+
+        return jsonify({'fechamentos': [{
+            'id': f['id'],
+            'usuario': f['usuario'],
+            'nome': f['nome'] or f['usuario'],
+            'poster_id': f['poster_id'],
+            'aberto_em': f['aberto_em'],
+            'fechado_em': f['fechado_em'],
+            'abastecimentos': f['total_abastecimentos'],
+            'litros': round(f['total_litros'] or 0, 2),
+            'bruto': round(f['total_bruto'] or 0, 2),
+            'desconto': round(f['total_desconto'] or 0, 2),
+            'liquido': round(f['total_liquido'] or 0, 2),
+        } for f in linhas]}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==================== LIBERAÇÕES EXTRAS (SÓ MASTER) ====================
+#
+# A regra normal é um cupom de combustível por dia e um de óleo por semana.
+# Aqui o Master abre exceção para um cliente específico, uma vez, com motivo.
+#
+# Por que só o Master: liberar cupom extra é dar desconto fora da regra. Se a
+# gerência ou o caixa pudessem fazer isso, a regra deixaria de ser regra —
+# viraria sugestão negociável no balcão.
+
+@app.route('/api/admin/clientes/buscar', methods=['GET'])
+@exige_master
+def admin_buscar_clientes():
+    """
+    Busca cliente por nome, placa, CPF ou e-mail, para o Master achar quem
+    está na frente dele no caixa. Mostra o consumo recente de cada categoria,
+    que é a informação que embasa a decisão de liberar ou não.
+    """
+    try:
+        termo = (request.args.get('q') or '').strip()
+        if len(termo) < 3:
+            return jsonify({'erro': 'Digite ao menos 3 caracteres'}), 400
+
+        so_numeros = re.sub(r'\D', '', termo)
+        like = f'%{termo.lower()}%'
+        hoje = agora().strftime('%Y-%m-%d')
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, nome, cpf, email, placa, ocupacao, status, empresa_convenio
+            FROM clientes
+            WHERE LOWER(nome) LIKE ?
+               OR LOWER(placa) LIKE ?
+               OR LOWER(email) LIKE ?
+               OR (? <> '' AND cpf LIKE ?)
+            ORDER BY nome
+        ''', (like, like, like, so_numeros, f'%{so_numeros}%'))
+        achados = cursor.fetchall()
+
+        clientes = []
+        for c in achados:
+            resumo = {}
+            for categoria, dias in INTERVALO_DIAS.items():
+                desde = (agora() - timedelta(days=dias - 1)).strftime('%Y-%m-%d')
+                cursor.execute('''
+                    SELECT c.data_geracao, c.status, p.nome AS produto_nome
+                    FROM cupons c
+                    LEFT JOIN produtos p ON p.id = c.produto_id
+                    WHERE c.cliente_id = ?
+                      AND COALESCE(c.categoria, CASE WHEN LOWER(p.tipo) = 'oleo'
+                                                     THEN 'oleo' ELSE 'combustivel' END) = ?
+                      AND c.data_geracao >= ?
+                      AND COALESCE(c.status, '') <> 'cancelado'
+                    ORDER BY c.id DESC
+                ''', (c['id'], categoria, desde))
+                cupom = cursor.fetchone()
+                resumo[categoria] = {
+                    'tem_cupom': bool(cupom),
+                    'usado': bool(cupom) and (cupom['status'] or '') in ('parcial', 'completo'),
+                    'produto': cupom['produto_nome'] if cupom else None,
+                    'data': cupom['data_geracao'] if cupom else None,
+                }
+
+            # Liberações que ainda estão de pé para este cliente
+            cursor.execute('''
+                SELECT id, categoria, motivo, validade
+                FROM liberacoes_extras
+                WHERE cliente_id = ? AND usada = 0 AND cancelada = 0 AND validade >= ?
+                ORDER BY id
+            ''', (c['id'], hoje))
+            pendentes = [{'id': l['id'], 'categoria': l['categoria'],
+                          'motivo': l['motivo'], 'validade': l['validade']}
+                         for l in cursor.fetchall()]
+
+            clientes.append({
+                'id': c['id'],
+                'nome': c['nome'],
+                # CPF parcial: o suficiente para conferir quem é, sem espalhar
+                # o documento inteiro por uma tela que fica aberta no caixa.
+                'cpf': f"***{(c['cpf'] or '')[3:9]}**" if c['cpf'] else '',
+                'email': c['email'],
+                'placa': c['placa'],
+                'ocupacao': c['ocupacao'],
+                'status': c['status'] or 'ativo',
+                'empresa_convenio': c['empresa_convenio'],
+                'consumo': resumo,
+                'liberacoes_pendentes': pendentes,
+            })
+
+        conn.close()
+        return jsonify({'clientes': clientes, 'total': len(clientes)}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/liberacoes', methods=['GET'])
+@exige_master
+def admin_listar_liberacoes():
+    """Liberações em aberto e as últimas usadas — para conferir e cancelar."""
+    try:
+        hoje = agora().strftime('%Y-%m-%d')
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT l.id, l.cliente_id, l.categoria, l.motivo, l.liberado_por,
+                   l.data_liberacao, l.validade, l.usada, l.data_uso,
+                   cl.nome AS cliente_nome, cl.placa
+            FROM liberacoes_extras l
+            LEFT JOIN clientes cl ON cl.id = l.cliente_id
+            WHERE l.cancelada = 0
+            ORDER BY l.id DESC
+            LIMIT 50
+        ''')
+        linhas = cursor.fetchall()
+        conn.close()
+
+        abertas, historico = [], []
+        for l in linhas:
+            item = {
+                'id': l['id'],
+                'cliente_id': l['cliente_id'],
+                'cliente_nome': l['cliente_nome'],
+                'placa': l['placa'],
+                'categoria': l['categoria'],
+                'categoria_nome': NOME_CATEGORIA.get(l['categoria'], l['categoria']),
+                'motivo': l['motivo'],
+                'liberado_por': l['liberado_por'],
+                'data_liberacao': l['data_liberacao'],
+                'validade': l['validade'],
+                'usada': bool(l['usada']),
+                'data_uso': l['data_uso'],
+                'expirada': (not l['usada']) and l['validade'] < hoje,
+            }
+            if not item['usada'] and not item['expirada']:
+                abertas.append(item)
+            else:
+                historico.append(item)
+
+        return jsonify({'abertas': abertas, 'historico': historico[:20]}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/liberacoes', methods=['POST'])
+@exige_master
+def admin_criar_liberacao():
+    """Libera um cupom extra para um cliente. Uso único, motivo obrigatório."""
+    try:
+        data = request.get_json() or {}
+        cliente_id = data.get('cliente_id')
+        categoria = (data.get('categoria') or '').strip().lower()
+        motivo = (data.get('motivo') or '').strip()
+
+        if categoria not in ('combustivel', 'oleo', 'qualquer'):
+            return jsonify({'erro': "Categoria deve ser 'combustivel', 'oleo' ou 'qualquer'"}), 400
+
+        # Motivo obrigatório, e não por burocracia: sem ele, daqui a três meses
+        # ninguém sabe por que aquele cliente levou cupom fora da regra — e é
+        # exatamente isso que a auditoria precisa responder.
+        if len(motivo) < 5:
+            return jsonify({'erro': 'Escreva o motivo da liberação (ao menos 5 caracteres)'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, nome FROM clientes WHERE id = ?', (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        hoje = agora().strftime('%Y-%m-%d')
+
+        # Uma liberação em aberto por categoria. Duas seguidas seria dar dois
+        # cupons extras sem que a tela deixasse isso óbvio.
+        cursor.execute('''
+            SELECT id FROM liberacoes_extras
+            WHERE cliente_id = ? AND categoria = ? AND usada = 0
+              AND cancelada = 0 AND validade >= ?
+        ''', (cliente_id, categoria, hoje))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({
+                'erro': f'{cliente["nome"]} já tem uma liberação de '
+                        f'{NOME_CATEGORIA.get(categoria, categoria)} em aberto.'
+            }), 400
+
+        validade = (agora() + timedelta(days=VALIDADE_LIBERACAO_DIAS)
+                    ).strftime('%Y-%m-%d')
+
+        cursor.execute('''
+            INSERT INTO liberacoes_extras
+            (cliente_id, categoria, motivo, liberado_por, data_liberacao, validade)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (cliente_id, categoria, motivo, request.admin['usuario'],
+              agora().strftime('%Y-%m-%d %H:%M:%S'), validade))
+
+        registrar_auditoria(
+            cursor, request.admin, 'liberacao_extra_criada',
+            detalhe=(f'Cupom extra de {NOME_CATEGORIA.get(categoria, categoria)} '
+                     f'liberado para {cliente["nome"]} — motivo: {motivo}'))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'mensagem': f'Liberado 1 cupom extra de '
+                        f'{NOME_CATEGORIA.get(categoria, categoria)} para '
+                        f'{cliente["nome"]}. Vale até '
+                        f'{datetime.strptime(validade, "%Y-%m-%d").strftime("%d/%m/%Y")}.',
+            'validade': validade
+        }), 201
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/liberacoes/<int:liberacao_id>/cancelar', methods=['POST'])
+@exige_master
+def admin_cancelar_liberacao(liberacao_id):
+    """Cancela uma liberação que ainda não foi usada."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT l.id, l.usada, l.categoria, cl.nome AS cliente_nome
+            FROM liberacoes_extras l
+            LEFT JOIN clientes cl ON cl.id = l.cliente_id
+            WHERE l.id = ? AND l.cancelada = 0
+        ''', (liberacao_id,))
+        lib = cursor.fetchone()
+
+        if not lib:
+            conn.close()
+            return jsonify({'erro': 'Liberação não encontrada'}), 404
+        if lib['usada']:
+            conn.close()
+            return jsonify({'erro': 'Esta liberação já foi usada e não pode ser cancelada'}), 400
+
+        cursor.execute('''
+            UPDATE liberacoes_extras
+            SET cancelada = 1, cancelada_por = ?, data_cancelamento = ?
+            WHERE id = ?
+        ''', (request.admin['usuario'], agora().strftime('%Y-%m-%d %H:%M:%S'),
+              liberacao_id))
+
+        registrar_auditoria(
+            cursor, request.admin, 'liberacao_extra_cancelada',
+            detalhe=f'Liberação #{liberacao_id} de {lib["cliente_nome"]} cancelada')
+
+        conn.commit()
+        conn.close()
+        return jsonify({'mensagem': 'Liberação cancelada'}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check"""
     return jsonify({
         'status': 'OK',
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': agora().isoformat(),
         'versao': '2.1'
     }), 200
 

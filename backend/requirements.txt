@@ -6,3 +6,8 @@ qrcode==7.4.2
 Pillow==11.0.0
 requests==2.32.3
 psycopg2-binary==2.9.9
+
+# Base de fusos horários. O container do Render é enxuto e pode não trazer a
+# base do sistema — sem ela, ZoneInfo('America/Sao_Paulo') falha e o horário
+# volta para UTC. Este pacote garante que o fuso de Brasília exista lá.
+tzdata==2026.3
