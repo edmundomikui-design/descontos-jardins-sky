@@ -8,10 +8,12 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
-// v13: entrou o "Esqueci minha senha". Sem trocar este número, quem já tem o
-// app instalado continuaria abrindo o index.html e o app-v2.js guardados —
-// ou seja, a tela de login sem o link novo.
-const CACHE = 'cajsky-v13';
+// v14: limite de cupons por categoria (1 combustível/dia, 1 óleo/semana), a
+// caixa de troca de produto, e a impressão + fechamento de turno na tela da
+// pista. Trocar este número faz parte de publicar: sem isso, quem já tem o
+// app instalado continua abrindo as telas guardadas em cache e não vê nada
+// do que foi publicado.
+const CACHE = 'cajsky-v14';
 
 const ESSENCIAIS = [
     '/',

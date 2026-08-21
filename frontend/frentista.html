@@ -45,6 +45,7 @@
             <strong id="topo-nome">—</strong>
             <span id="topo-posto" class="chip">—</span>
         </div>
+        <button class="btn-texto" onclick="abrirTurno()">📄 Meu turno</button>
         <button class="btn-texto" onclick="sair()">Sair</button>
     </header>
 
@@ -170,9 +171,64 @@
 
         <p id="ok-saldo" class="aviso-saldo"></p>
 
+        <button class="btn btn-grande" onclick="imprimirComprovante()">🖨️ Imprimir comprovante</button>
         <button class="btn btn-grande" onclick="voltarParaLeitura()">Ler o próximo cupom</button>
     </div>
 </section>
+
+
+<!-- ============ MEU TURNO ============ -->
+<!--
+     Mostra tudo o que ESTE frentista registrou desde o fechamento anterior
+     dele. Não depende do relógio: quem entra 5h e sai 13h30 vê um turno só.
+-->
+<section id="tela-turno" class="tela" hidden>
+    <header class="topo">
+        <button class="btn-texto" onclick="voltarParaLeitura()">‹ Voltar</button>
+        <span id="turno-operador" class="chip">—</span>
+    </header>
+
+    <div class="conteudo">
+        <h2>Meu turno</h2>
+        <p class="dica" id="turno-periodo">—</p>
+
+        <div class="cartao resumo">
+            <div class="linha"><span>Abastecimentos</span><span id="turno-qtd">0</span></div>
+            <div class="linha"><span>Litros</span><span id="turno-litros">0,00 L</span></div>
+            <div class="linha"><span>Sem desconto</span><span id="turno-bruto">R$ 0,00</span></div>
+            <div class="linha desconto"><span>Desconto dado</span><span id="turno-desconto">− R$ 0,00</span></div>
+            <div class="linha total"><span>Recebido</span><span id="turno-liquido">R$ 0,00</span></div>
+        </div>
+
+        <div id="turno-por-produto"></div>
+        <div id="turno-lista"></div>
+
+        <p id="turno-erro" class="erro"></p>
+
+        <button class="btn btn-grande" onclick="imprimirTurno()">
+            🖨️ Imprimir cupons do turno
+        </button>
+
+        <button id="btn-fechar-turno" class="btn btn-grande btn-confirmar"
+                onclick="confirmarFechamento()">
+            🔒 Fechar turno
+        </button>
+        <p class="dica" style="text-align:center;margin-top:8px;">
+            Ao fechar, o relatório é impresso e você sai do sistema.
+            O que for registrado depois entra no próximo turno.
+        </p>
+    </div>
+</section>
+
+
+<!-- ============ ÁREA DE IMPRESSÃO ============ -->
+<!--
+     Fica escondida na tela e só aparece no papel (ver @media print no CSS).
+     É preenchida por JavaScript antes de chamar a impressão. Fazer assim, em
+     vez de abrir outra janela, evita o bloqueador de pop-up do navegador —
+     que no celular do frentista barraria a impressão sem explicar por quê.
+-->
+<div id="area-impressao" aria-hidden="true"></div>
 
 <script>
     window.INSTALAR = {
