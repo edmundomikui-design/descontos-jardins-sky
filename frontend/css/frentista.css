@@ -200,3 +200,158 @@ input::placeholder { color: #475569; }
     .valor-gigante { font-size: 38px; }
     .preco-destaque { font-size: 26px; }
 }
+
+/* ===================================================================
+   MEU TURNO
+   =================================================================== */
+
+.turno-tabela {
+    width: 100%; border-collapse: collapse;
+    margin: 14px 0; font-size: 14px;
+}
+.turno-tabela th {
+    text-align: left; padding: 8px 6px;
+    color: #94a3b8; font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .3px;
+    border-bottom: 1px solid #334155;
+}
+.turno-tabela td {
+    padding: 9px 6px; border-bottom: 1px solid #1e293b;
+    color: #e2e8f0;
+}
+.turno-tabela td.num { text-align: right; white-space: nowrap; }
+.turno-vazio { color: #94a3b8; text-align: center; padding: 22px 0; font-size: 15px; }
+.turno-sub {
+    margin: 16px 0 4px; color: #94a3b8;
+    font-size: 12px; text-transform: uppercase; letter-spacing: .4px;
+}
+
+/* ===================================================================
+   IMPRESSÃO — folha A4
+   ===================================================================
+
+   A área de impressão fica fora da tela e só existe no papel. Duas coisas
+   importantes aqui:
+
+   1. Tudo vira preto no branco. A tela da pista é escura de propósito (para
+      não ofuscar de madrugada), mas imprimir fundo escuro gasta a metade de
+      um cartucho por folha — e a maioria das impressoras descarta o fundo,
+      deixando texto claro em papel branco, ilegível.
+
+   2. As classes .compacto-1 .. .compacto-3 encolhem a fonte conforme a
+      quantidade de linhas, para o turno inteiro caber numa folha só. Quem
+      escolhe a classe é o JavaScript, contando os abastecimentos.
+   =================================================================== */
+
+#area-impressao { display: none; }
+
+@media print {
+    /* Some com a tela inteira e mostra só o papel */
+    body > section, body > div:not(#area-impressao) { display: none !important; }
+
+    html, body {
+        background: #fff !important; color: #000 !important;
+        margin: 0; padding: 0;
+    }
+
+    #area-impressao {
+        display: block !important;
+        color: #000; background: #fff;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px; line-height: 1.35;
+        padding: 0;
+    }
+
+    @page { size: A4 portrait; margin: 12mm 10mm; }
+
+    .p-cabecalho {
+        display: flex; justify-content: space-between;
+        align-items: flex-start; gap: 12px;
+        border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px;
+    }
+    .p-marca { font-size: 20px; font-weight: 800; letter-spacing: -.5px; }
+    .p-sub { font-size: 11px; color: #333; }
+    .p-meta { text-align: right; font-size: 11px; }
+    .p-meta strong { font-size: 13px; }
+
+    .p-titulo {
+        font-size: 15px; font-weight: 700;
+        margin: 0 0 8px; text-transform: uppercase; letter-spacing: .4px;
+    }
+
+    .p-tabela { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    .p-tabela th {
+        text-align: left; font-size: 10px; text-transform: uppercase;
+        letter-spacing: .3px; border-bottom: 1.5px solid #000;
+        padding: 5px 4px;
+    }
+    .p-tabela td {
+        padding: 4px; border-bottom: .5px solid #bbb;
+        vertical-align: top;
+    }
+    .p-tabela td.num, .p-tabela th.num { text-align: right; white-space: nowrap; }
+    .p-tabela tr { page-break-inside: avoid; }
+
+    .p-totais {
+        border-top: 2px solid #000; margin-top: 6px; padding-top: 8px;
+        page-break-inside: avoid;
+    }
+    .p-linha {
+        display: flex; justify-content: space-between;
+        padding: 3px 0; font-size: 12px;
+    }
+    .p-linha.forte {
+        font-size: 16px; font-weight: 800;
+        border-top: 1px solid #000; margin-top: 5px; padding-top: 7px;
+    }
+
+    .p-assinaturas {
+        display: flex; gap: 30px; margin-top: 18px;
+        page-break-inside: avoid;
+    }
+    .p-assinaturas div {
+        flex: 1; border-top: 1px solid #000;
+        padding-top: 4px; font-size: 10px; text-align: center;
+    }
+
+    .p-rodape {
+        margin-top: 10px; padding-top: 5px; border-top: .5px solid #999;
+        font-size: 9px; color: #444; text-align: center;
+    }
+
+    /* Comprovante de uma venda: meia folha basta */
+    .p-comprovante { max-width: 100%; }
+    .p-comprovante .p-valor {
+        font-size: 30px; font-weight: 800; margin: 8px 0 12px;
+    }
+    .p-corte {
+        margin-top: 20px; border-top: 1px dashed #666;
+        padding-top: 5px; font-size: 9px; color: #666;
+    }
+
+    /* --- redução automática para caber numa folha --- */
+    .compacto-1 { font-size: 10.5px; }
+    .compacto-1 .p-tabela td { padding: 2.5px 4px; }
+    .compacto-1 .p-assinaturas { margin-top: 14px; }
+
+    .compacto-2 { font-size: 9px; line-height: 1.25; }
+    .compacto-2 .p-tabela td { padding: 1.5px 3px; }
+    .compacto-2 .p-tabela th { padding: 3px; font-size: 8px; }
+    .compacto-2 .p-marca { font-size: 16px; }
+    .compacto-2 .p-titulo { font-size: 12px; margin-bottom: 5px; }
+    .compacto-2 .p-linha { padding: 2px 0; font-size: 10px; }
+    .compacto-2 .p-linha.forte { font-size: 13px; }
+    .compacto-2 .p-assinaturas { margin-top: 12px; }
+    .compacto-2 .p-rodape { margin-top: 8px; }
+
+    .compacto-3 { font-size: 7.5px; line-height: 1.2; }
+    .compacto-3 .p-tabela td { padding: .8px 3px; }
+    .compacto-3 .p-tabela th { padding: 2px 3px; font-size: 7px; }
+    .compacto-3 .p-marca { font-size: 14px; }
+    .compacto-3 .p-titulo { font-size: 11px; margin-bottom: 4px; }
+    .compacto-3 .p-linha { padding: 1px 0; font-size: 9px; }
+    .compacto-3 .p-linha.forte { font-size: 12px; padding-top: 4px; margin-top: 3px; }
+    .compacto-3 .p-assinaturas { margin-top: 10px; }
+    .compacto-3 .p-cabecalho { padding-bottom: 4px; margin-bottom: 5px; }
+    .compacto-3 .p-rodape { margin-top: 6px; }
+}
