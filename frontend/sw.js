@@ -8,13 +8,16 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
+// v16: a imagem do Cajinho passou para a pasta icons, que já existia
+// (criar pasta nova pelo site do GitHub é o passo que mais dá errado).
+//
 // v15: o mascote Cajinho no cabeçalho das telas de entrar/criar conta, e o
 // endereço do posto com botão de rota DENTRO do cupom (antes ficava só num
 // bloco no fim da página, e não ia junto na imagem salva).
 // Trocar este número faz parte de publicar: sem isso, quem já tem o app
 // instalado continua abrindo as telas guardadas em cache e não vê nada do
 // que foi publicado.
-const CACHE = 'cajsky-v15';
+const CACHE = 'cajsky-v16';
 
 const ESSENCIAIS = [
     '/',
@@ -29,7 +32,7 @@ const ESSENCIAIS = [
     '/js/instalar.js',
     '/manifest.json',
     '/manifest-pista.json',
-    '/img/cajinho.png',
+    '/icons/cajinho.png',
     '/icons/cajsky-192.png',
     '/icons/pista-192.png'
 ];
