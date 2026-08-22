@@ -8,6 +8,9 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
+// v17: "DESCONTOS" ganhou uma linha inteira no topo da faixa, para poder
+// ser grande de verdade sem espremer o mascote.
+//
 // v16: a imagem do Cajinho passou para a pasta icons, que já existia
 // (criar pasta nova pelo site do GitHub é o passo que mais dá errado).
 //
@@ -17,7 +20,7 @@
 // Trocar este número faz parte de publicar: sem isso, quem já tem o app
 // instalado continua abrindo as telas guardadas em cache e não vê nada do
 // que foi publicado.
-const CACHE = 'cajsky-v16';
+const CACHE = 'cajsky-v17';
 
 const ESSENCIAIS = [
     '/',
