@@ -611,49 +611,175 @@ function mostrarQRParaSalvarIOS(srcImagem) {
     document.getElementById('fechar-overlay-qr').addEventListener('click', () => overlay.remove());
 }
 
-// Salva a imagem do QR code na galeria/downloads do celular
-function salvarQRCode() {
-    const img = document.getElementById('qrcode-img');
-    if (!img || !img.src) {
+// ============================================================
+//  IMAGEM DO CUPOM PARA SALVAR / COMPARTILHAR
+// ============================================================
+//
+// Antes, salvar o cupom salvava só o quadrado preto e branco do QR code.
+// Na galeria do celular viravam vários quadrados iguais, sem dizer de que
+// produto era, até quando valia, nem para qual posto ir — e é justamente a
+// imagem salva que o motorista abre quando está na pista sem sinal.
+//
+// Agora a imagem salva é o cupom inteiro: produto, preço final, QR code,
+// código digitável, validade e o endereço do posto.
+
+function dataDeHojePorExtenso() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function textoDoElemento(id, padrao) {
+    const el = document.getElementById(id);
+    const t = el ? (el.textContent || '').trim() : '';
+    return t && t !== '-' ? t : (padrao || '');
+}
+
+// Monta o PNG do cupom. Devolve um endereço de imagem pronto para salvar.
+// Se qualquer coisa der errado, devolve o QR code puro — melhor um cupom
+// simples do que nenhum.
+function montarImagemCupom() {
+    return new Promise(resolve => {
+        const img = document.getElementById('qrcode-img');
+        if (!img || !img.src) { resolve(null); return; }
+
+        const qr = new Image();
+        qr.onerror = () => resolve(img.src);
+        qr.onload = () => {
+            try {
+                const L = 820;                       // largura da imagem
+                const postos = (typeof postosDoCupom === 'function')
+                    ? postosDoCupom() : [];
+                const A = 1150 + postos.length * 150; // altura
+
+                const tela = document.createElement('canvas');
+                tela.width = L; tela.height = A;
+                const c = tela.getContext('2d');
+
+                const AZUL = '#1e3a8a', AMARELO = '#FFD100';
+                const centro = (txt, y, fonte, cor) => {
+                    c.font = fonte; c.fillStyle = cor;
+                    c.textAlign = 'center'; c.fillText(txt, L / 2, y);
+                };
+
+                c.fillStyle = '#ffffff'; c.fillRect(0, 0, L, A);
+
+                // ---- faixa do topo ----
+                c.fillStyle = AZUL; c.fillRect(0, 0, L, 170);
+                centro('D E S C O N T O S', 62, 'bold 30px Arial, sans-serif', AMARELO);
+                centro('CAJ SKY', 126, 'bold 62px Arial, sans-serif', '#ffffff');
+
+                // ---- produto e preço ----
+                let y = 240;
+                centro(textoDoElemento('cupom-produto-nome',
+                                       textoDoElemento('produto-nome', 'Combustível')),
+                       y, 'bold 40px Arial, sans-serif', '#111827');
+
+                const preco = textoDoElemento('preco-final-destaque',
+                                              textoDoElemento('preco-final', ''));
+                if (preco) {
+                    y += 76;
+                    centro(preco, y, 'bold 66px Arial, sans-serif', '#047857');
+                    y += 40;
+                    centro(textoDoElemento('preco-final-unidade', 'com o desconto aplicado'),
+                           y, '28px Arial, sans-serif', '#4b5563');
+                }
+
+                // ---- QR code ----
+                y += 44;
+                const lado = 420;
+                c.fillStyle = '#ffffff';
+                c.fillRect((L - lado) / 2 - 14, y - 14, lado + 28, lado + 28);
+                c.strokeStyle = '#e5e7eb'; c.lineWidth = 3;
+                c.strokeRect((L - lado) / 2 - 14, y - 14, lado + 28, lado + 28);
+                c.drawImage(qr, (L - lado) / 2, y, lado, lado);
+                y += lado + 58;
+
+                // ---- código digitável ----
+                const codigo = textoDoElemento('qrcode-text', '');
+                if (codigo) {
+                    centro(codigo, y, 'bold 34px monospace', '#111827');
+                    y += 42;
+                }
+                centro(`Válido só hoje, ${dataDeHojePorExtenso()}, até a meia-noite`,
+                       y, '26px Arial, sans-serif', '#b45309');
+                y += 46;
+
+                // ---- postos ----
+                c.strokeStyle = '#e5e7eb'; c.lineWidth = 2;
+                c.beginPath(); c.moveTo(60, y); c.lineTo(L - 60, y); c.stroke();
+                y += 46;
+
+                centro('ONDE USAR', y, 'bold 26px Arial, sans-serif', '#6b7280');
+                y += 48;
+
+                postos.forEach(p => {
+                    centro(p.nome, y, 'bold 36px Arial, sans-serif', '#111827');
+                    y += 44;
+                    centro(p.endereco, y, '30px Arial, sans-serif', '#374151');
+                    y += 38;
+                    centro(`${p.referencia} · aberto ${p.horario}`,
+                           y, '25px Arial, sans-serif', '#6b7280');
+                    y += 60;
+                });
+
+                // ---- rodapé ----
+                c.fillStyle = AMARELO; c.fillRect(0, A - 76, L, 76);
+                centro('cajsky.com.br', A - 28, 'bold 34px Arial, sans-serif', '#6b5200');
+
+                resolve(tela.toDataURL('image/png'));
+            } catch (e) {
+                console.warn('[cupom] não consegui montar a imagem completa:', e);
+                resolve(img.src);   // cai no QR puro
+            }
+        };
+        qr.src = img.src;
+    });
+}
+
+function nomeArquivoCupom() {
+    const nome = (textoDoElemento('cupom-produto-nome', 'cupom') || 'cupom')
+        .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+    const hoje = new Date().toISOString().slice(0, 10);
+    return `cupom-${nome}-${hoje}.png`;
+}
+
+// Salva o cupom na galeria/downloads do celular
+async function salvarQRCode() {
+    const imagem = await montarImagemCupom();
+    if (!imagem) {
         mostrarAviso('Nenhum cupom aberto para salvar.');
         return;
     }
 
     if (ehIOS()) {
-        mostrarQRParaSalvarIOS(img.src);
+        mostrarQRParaSalvarIOS(imagem);
         return;
     }
 
-    const nomeProduto = (document.getElementById('cupom-produto-nome')?.textContent || 'cupom')
-        .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-    const hoje = new Date().toISOString().slice(0, 10);
-
     const link = document.createElement('a');
-    link.href = img.src;
-    link.download = `cupom-${nomeProduto}-${hoje}.png`;
+    link.href = imagem;
+    link.download = nomeArquivoCupom();
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 }
 
-// Compartilha o QR code por WhatsApp (ou qualquer app) usando o menu nativo
+// Compartilha o cupom por WhatsApp (ou qualquer app) usando o menu nativo
 // de compartilhamento do celular. Se o celular não suportar compartilhar
 // imagem direto, cai no caminho de salvar (que já trata iPhone à parte) e
 // avisa o cliente para anexar manualmente.
 async function compartilharQRCode() {
-    const img = document.getElementById('qrcode-img');
-    if (!img || !img.src) {
+    const imagem = await montarImagemCupom();
+    if (!imagem) {
         mostrarAviso('Nenhum cupom aberto para compartilhar.');
         return;
     }
 
-    const nomeProduto = (document.getElementById('cupom-produto-nome')?.textContent || 'cupom')
-        .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-    const hoje = new Date().toISOString().slice(0, 10);
-    const nomeArquivo = `cupom-${nomeProduto}-${hoje}.png`;
+    const nomeArquivo = nomeArquivoCupom();
 
     try {
-        const resposta = await fetch(img.src);
+        const resposta = await fetch(imagem);
         const blob = await resposta.blob();
         const arquivo = new File([blob], nomeArquivo, { type: 'image/png' });
 
@@ -661,7 +787,7 @@ async function compartilharQRCode() {
             await navigator.share({
                 files: [arquivo],
                 title: 'Meu cupom CAJ SKY',
-                text: 'Aqui está meu QR code de desconto CAJ SKY'
+                text: 'Aqui está meu cupom de desconto CAJ SKY'
             });
         } else {
             // Celular não permite compartilhar arquivo direto (comum no
@@ -670,12 +796,12 @@ async function compartilharQRCode() {
             if (ehIOS()) {
                 mostrarAviso('Toque e segure a imagem que apareceu na tela para salvá-la. Depois é só abrir o WhatsApp e anexar a foto salva.');
             } else {
-                mostrarAviso('Seu celular não permite enviar a imagem direto pelo WhatsApp. Salvei o QR code — agora é só abrir o WhatsApp e anexar a imagem salva.');
+                mostrarAviso('Seu celular não permite enviar a imagem direto pelo WhatsApp. Salvei o cupom — agora é só abrir o WhatsApp e anexar a imagem salva.');
             }
         }
     } catch (erro) {
         if (erro.name !== 'AbortError') {
-            mostrarAviso('Não consegui compartilhar. Tente salvar o QR code e enviar manualmente pelo WhatsApp.');
+            mostrarAviso('Não consegui compartilhar. Tente salvar o cupom e enviar manualmente pelo WhatsApp.');
         }
     }
 }
@@ -932,6 +1058,9 @@ function mostrarCupomGerado(data) {
     } else if (data.quantidade_permitida != null) {
         setTxt('cupom-saldo', `Limite: ${data.quantidade_permitida}${unidade}`);
     }
+
+    // Endereço e rota do posto, dentro do próprio cupom.
+    if (typeof montarPostosDoCupom === 'function') montarPostosDoCupom();
 
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
