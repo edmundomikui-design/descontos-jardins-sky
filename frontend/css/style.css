@@ -49,19 +49,70 @@ html, body {
     overflow-y: auto;
 }
 
+/* ===== CABEÇALHO COM O CAJINHO =====
+   Faixa no topo do cartão. O mascote fica à direita, da borda de cima até o
+   começo do formulário: aparece nas três telas (entrar, criar conta e
+   esqueci a senha) sem cobrir campo nenhum. */
+.auth-card { padding-top: 0; overflow: hidden; }
+
 .logo {
-    text-align: center;
-    margin-bottom: 30px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    text-align: left;
+    margin: 0 -30px 22px;
+    padding: 22px 30px 0;
+    background: linear-gradient(160deg, #1e3a8a 0%, #2563eb 100%);
+    border-radius: 12px 12px 0 0;
+    min-height: 190px;
 }
+
+.logo-texto { flex: 1 1 auto; min-width: 0; padding-bottom: 20px; }
 
 .logo h1 {
-    color: var(--primary-color);
-    margin-bottom: 10px;
+    color: #fff;
+    font-size: 30px;
+    line-height: 0.95;
+    letter-spacing: -0.8px;
+    margin-bottom: 8px;
 }
 
-.logo p {
-    color: #666;
-    font-size: 14px;
+.logo h1 .linha-1 {
+    display: block;
+    font-size: 15px;
+    letter-spacing: 3px;
+    color: #FFD100;
+    margin-bottom: 3px;
+}
+
+.logo p { color: #cfe0ff; font-size: 12.5px; line-height: 1.35; }
+
+.logo-bandeira {
+    display: inline-block;
+    margin-top: 9px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #FFD100;
+    color: #6b5200;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+
+.logo .cajinho {
+    flex: 0 0 auto;
+    width: 178px;
+    height: auto;
+    align-self: flex-end;
+    margin: 0 -22px -1px 0;
+}
+
+@media (max-width: 370px) {
+    .logo h1 { font-size: 26px; }
+    .logo .cajinho { width: 152px; }
 }
 
 /* ===== FORMULÁRIOS ===== */
@@ -528,8 +579,11 @@ html, body {
     }
 
     .auth-card {
-        padding: 20px;
+        padding: 0 20px 20px;
     }
+
+    /* a faixa do cabeçalho acompanha o padding menor do celular */
+    .logo { margin: 0 -20px 20px; padding: 20px 20px 0; min-height: 176px; }
 
     .dashboard-container {
         padding: 10px;
@@ -818,4 +872,95 @@ html, body {
     line-height: 18px;
     text-align: center;
     vertical-align: middle;
+}
+
+
+/* ============================================================
+   POSTOS DENTRO DO CUPOM
+   O motorista abre o cupom e já vê para onde ir, sem rolar a
+   tela. O botão abre o mapa traçando a rota de onde ele está.
+   ============================================================ */
+.cupom-postos {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 2px dashed #d7dbe3;
+}
+
+.cupom-postos h4 {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #6b7280;
+    margin-bottom: 12px;
+}
+
+.posto-cupom {
+    background: #f7f9fc;
+    border: 1px solid #e3e8f0;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+
+.posto-cupom:last-child { margin-bottom: 0; }
+
+.posto-cupom-nome {
+    font-size: 17px;
+    font-weight: 800;
+    color: #111827;
+    margin-bottom: 4px;
+}
+
+.posto-cupom-endereco {
+    font-size: 15px;
+    color: #374151;
+    line-height: 1.45;
+}
+
+.posto-cupom-ref { font-size: 13px; color: #6b7280; }
+
+.posto-cupom-botoes {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+/* Alvo grande de propósito: o motorista costuma tocar isso com o carro
+   parado no semáforo, com pressa e às vezes com luva. */
+.botao-rota,
+.botao-waze {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 46px;
+    padding: 0 18px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    text-decoration: none;
+}
+
+.botao-rota { flex: 1; background: #1e40af; color: #fff; }
+.botao-rota:active { background: #1b3a9c; }
+
+.botao-waze {
+    flex: 0 0 auto;
+    background: #fff;
+    color: #1e40af;
+    border: 2px solid #c7d2fe;
+}
+
+/* Celular estreito (iPhone SE e afins): sem isso "Como chegar" quebra em
+   duas linhas dentro do botão. */
+@media (max-width: 360px) {
+    .botao-rota,
+    .botao-waze { font-size: 14px; padding: 0 12px; }
+    .posto-cupom { padding: 12px; }
+}
+
+/* Na impressão o botão não serve para nada — vira texto com o endereço. */
+@media print {
+    .posto-cupom-botoes { display: none; }
+    .cupom-postos { border-top: 1px solid #999; }
 }
