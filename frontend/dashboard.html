@@ -10,7 +10,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="CAJ SKY">
-    <link rel="stylesheet" href="css/style.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body class="dashboard-page">
     <div class="navbar">
@@ -126,12 +126,18 @@
                 <div class="cupom-instrucoes">
                     <h4>Como Usar:</h4>
                     <ol>
-                        <li>Procure um dos postos participantes</li>
-                        <li>Mostre este QR code para o operador</li>
-                        <li>O desconto será aplicado automaticamente</li>
+                        <li>Vá até o posto — o endereço e a rota estão logo abaixo</li>
+                        <li>Mostre este QR code para o frentista</li>
+                        <li>O desconto entra na hora, na bomba</li>
                         <li>Volte amanhã para gerar novo cupom</li>
                     </ol>
                 </div>
+
+                <!-- Endereço e rota do posto, DENTRO do cupom.
+                     Antes ficavam num bloco no fim da página: quem abria o
+                     cupom via o QR code e não via para onde ir. O conteúdo
+                     vem de js/postos.js. -->
+                <div id="cupom-postos" class="cupom-postos"></div>
 
                 <div class="cupom-limites">
                     <p>⚠️ Um cupom por produto | Válido apenas hoje, até a meia-noite</p>
@@ -139,7 +145,7 @@
                 </div>
 
                 <button onclick="salvarQRCode()" class="btn btn-primary">
-                    💾 Salvar QR Code no celular
+                    💾 Salvar cupom no celular
                 </button>
 
                 <button onclick="imprimirCupom()" class="btn btn-secondary" style="margin-top: 10px;">
@@ -157,14 +163,14 @@
         <div class="postos-card">
             <h3>Postos Participantes</h3>
             <div class="posto-item">
-                <h4>CAJ - Centro Automotivo Jardins</h4>
-                <p>📍 Rua Estados Unidos, 1930 - Esquina Consolação</p>
-                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+                <h4>Posto Jardins</h4>
+                <p>📍 Rua Estados Unidos, 1930 — esquina com a Rua da Consolação</p>
+                <p>⏰ Aberto 24 horas</p>
             </div>
             <div class="posto-item">
-                <h4>SKY - Sky Auto Posto</h4>
-                <p>📍 Rua Estados Unidos, 1776 - Esquina Bela Cintra</p>
-                <p>⏰ Horário: 24h | ⛽ Ipiranga</p>
+                <h4>Posto Sky</h4>
+                <p>📍 Rua Estados Unidos, 1776 — esquina com a Rua Bela Cintra</p>
+                <p>⏰ Aberto 24 horas</p>
             </div>
         </div>
 
@@ -196,6 +202,7 @@
     </script>
     <script src="js/instalar.js?v=1"></script>
     <script src="js/comprovacao.js?v=1"></script>
-    <script src="js/app-v2.js?v=11"></script>
+    <script src="js/postos.js?v=1"></script>
+    <script src="js/app-v2.js?v=12"></script>
 </body>
 </html>

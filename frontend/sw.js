@@ -8,12 +8,13 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
-// v14: limite de cupons por categoria (1 combustível/dia, 1 óleo/semana), a
-// caixa de troca de produto, e a impressão + fechamento de turno na tela da
-// pista. Trocar este número faz parte de publicar: sem isso, quem já tem o
-// app instalado continua abrindo as telas guardadas em cache e não vê nada
-// do que foi publicado.
-const CACHE = 'cajsky-v14';
+// v15: o mascote Cajinho no cabeçalho das telas de entrar/criar conta, e o
+// endereço do posto com botão de rota DENTRO do cupom (antes ficava só num
+// bloco no fim da página, e não ia junto na imagem salva).
+// Trocar este número faz parte de publicar: sem isso, quem já tem o app
+// instalado continua abrindo as telas guardadas em cache e não vê nada do
+// que foi publicado.
+const CACHE = 'cajsky-v15';
 
 const ESSENCIAIS = [
     '/',
@@ -23,10 +24,12 @@ const ESSENCIAIS = [
     '/css/style.css',
     '/css/frentista.css',
     '/js/app-v2.js',
+    '/js/postos.js',
     '/js/frentista.js',
     '/js/instalar.js',
     '/manifest.json',
     '/manifest-pista.json',
+    '/img/cajinho.png',
     '/icons/cajsky-192.png',
     '/icons/pista-192.png'
 ];
