@@ -50,41 +50,51 @@ html, body {
 }
 
 /* ===== CABEÇALHO COM O CAJINHO =====
-   Faixa no topo do cartão. O mascote fica à direita, da borda de cima até o
-   começo do formulário: aparece nas três telas (entrar, criar conta e
-   esqueci a senha) sem cobrir campo nenhum. */
+   Faixa no topo do cartão. "DESCONTOS" ocupa uma linha inteira, para poder
+   ser grande de verdade sem espremer o mascote — é a palavra que o motorista
+   precisa enxergar de longe. Abaixo, o nome à esquerda e o Cajinho à direita,
+   da borda de cima até o começo do formulário. Aparece nas três telas
+   (entrar, criar conta e esqueci a senha) sem cobrir campo nenhum. */
 .auth-card { padding-top: 0; overflow: hidden; }
 
 .logo {
     position: relative;
     overflow: hidden;
-    display: flex;
-    align-items: flex-end;
-    gap: 4px;
+    display: block;
     text-align: left;
     margin: 0 -30px 22px;
-    padding: 22px 30px 0;
+    padding: 20px 30px 0;
     background: linear-gradient(160deg, #1e3a8a 0%, #2563eb 100%);
     border-radius: 12px 12px 0 0;
-    min-height: 190px;
 }
 
-.logo-texto { flex: 1 1 auto; min-width: 0; padding-bottom: 20px; }
+.logo-descontos {
+    display: block;
+    color: #FFD100;
+    font-size: 40px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 5px;
+    white-space: nowrap;
+    margin-bottom: 6px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.22);
+}
+
+.logo-linha {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 150px;
+}
+
+.logo-texto { flex: 1 1 auto; min-width: 0; padding-bottom: 6px; }
 
 .logo h1 {
     color: #fff;
     font-size: 30px;
-    line-height: 0.95;
-    letter-spacing: -0.8px;
+    line-height: 1;
+    letter-spacing: -0.5px;
     margin-bottom: 8px;
-}
-
-.logo h1 .linha-1 {
-    display: block;
-    font-size: 15px;
-    letter-spacing: 3px;
-    color: #FFD100;
-    margin-bottom: 3px;
 }
 
 .logo p { color: #cfe0ff; font-size: 12.5px; line-height: 1.35; }
@@ -104,15 +114,21 @@ html, body {
 
 .logo .cajinho {
     flex: 0 0 auto;
-    width: 178px;
+    width: 172px;
     height: auto;
     align-self: flex-end;
     margin: 0 -22px -1px 0;
 }
 
+/* Celular estreito: "DESCONTOS" encolhe junto para não empurrar a tela. */
 @media (max-width: 370px) {
+    .logo-descontos { font-size: 33px; letter-spacing: 3px; }
     .logo h1 { font-size: 26px; }
     .logo .cajinho { width: 152px; }
+}
+
+@media (max-width: 340px) {
+    .logo-descontos { font-size: 28px; letter-spacing: 2px; }
 }
 
 /* ===== FORMULÁRIOS ===== */
@@ -583,7 +599,8 @@ html, body {
     }
 
     /* a faixa do cabeçalho acompanha o padding menor do celular */
-    .logo { margin: 0 -20px 20px; padding: 20px 20px 0; min-height: 176px; }
+    .logo { margin: 0 -20px 20px; padding: 18px 20px 0; }
+    .logo-linha { min-height: 158px; }
 
     .dashboard-container {
         padding: 10px;
