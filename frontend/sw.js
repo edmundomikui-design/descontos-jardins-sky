@@ -8,6 +8,11 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
+// v18: o monograma OFICIAL da Ipiranga entrou no uniforme do Cajinho, no
+// lugar da imitação que a IA tinha desenhado. Base: guia simplificado de
+// marca (mar/2023), seção "uso restrito | desverbalizado", que prevê o
+// símbolo sozinho "em roupas e uniformes de colaboradores".
+//
 // v17: "DESCONTOS" ganhou uma linha inteira no topo da faixa, para poder
 // ser grande de verdade sem espremer o mascote.
 //
@@ -20,7 +25,7 @@
 // Trocar este número faz parte de publicar: sem isso, quem já tem o app
 // instalado continua abrindo as telas guardadas em cache e não vê nada do
 // que foi publicado.
-const CACHE = 'cajsky-v17';
+const CACHE = 'cajsky-v18';
 
 const ESSENCIAIS = [
     '/',
