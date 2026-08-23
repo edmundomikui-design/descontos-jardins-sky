@@ -56,7 +56,7 @@ html, body {
    acima da etiqueta. Assim o texto pôde crescer sem empurrar nada e sem
    deixar a faixa mais alta.
    Aparece nas três telas (entrar, criar conta e esqueci a senha). */
-.auth-card { padding-top: 0; overflow: hidden; }
+.auth-card { padding-top: 0; overflow-x: hidden; }
 
 .logo {
     position: relative;
