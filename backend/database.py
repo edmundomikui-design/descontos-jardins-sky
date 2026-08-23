@@ -342,6 +342,69 @@ def _schema(pg):
             criado_por TEXT,
             data_criacao TIMESTAMP DEFAULT {agora}
         )''',
+
+        # Programa de indicação: "traga um amigo, ganhe um cupom".
+        #
+        # Linha única de configuração (id sempre 1), para o Master poder
+        # ajustar sem mexer em código: de quantas em quantas indicações que
+        # viraram cliente de verdade (gerou E usou cupom) o indicador ganha
+        # um cupom-prêmio, e de quanto é esse prêmio.
+        #
+        # Os dois mínimos de litros existem para o programa premiar cliente
+        # de verdade, e não abastecimento de 1 litro só para fechar a conta
+        # do amigo. Cada indicado precisa fazer UM abastecimento que atinja
+        # o mínimo da categoria dele para ser contado.
+        #
+        # O óleo tem mínimo 1 porque na pista existe reposição avulsa — o
+        # motorista compra 1 litro para completar o nível, sem troca. Isso é
+        # compra legítima e conta.
+        # Os três prazos (decisão do Edmundo, 23/08) são independentes:
+        #
+        #   data_fim_campanha      — depois desta data o programa para de gerar
+        #                            prêmios novos. Prêmios já ganhos continuam
+        #                            valendo até a validade deles. Vazio = sem
+        #                            prazo. Serve também para comunicar
+        #                            "válido até…" ao motorista, que gera urgência.
+        #   validade_premio_dias   — quantos dias o cliente tem para USAR um
+        #                            prêmio ganho. Sem isso, um prêmio de hoje
+        #                            poderia ser cobrado daqui a dois anos.
+        #   validade_indicacao_dias— quantos dias um cadastro feito pelo link
+        #                            tem para abastecer e virar ponto. Passou,
+        #                            deixa de contar.
+        f'''CREATE TABLE IF NOT EXISTS config_indicacoes (
+            id {serial},
+            meta_indicacoes INTEGER DEFAULT 3,
+            valor_recompensa {real} DEFAULT 10.00,
+            minimo_litros_combustivel {real} DEFAULT 20,
+            minimo_litros_oleo {real} DEFAULT 1,
+            data_fim_campanha TEXT,
+            validade_premio_dias INTEGER DEFAULT 30,
+            validade_indicacao_dias INTEGER DEFAULT 90,
+            ativo INTEGER DEFAULT 1,
+            atualizado_por TEXT,
+            data_atualizacao TIMESTAMP DEFAULT {agora}
+        )''',
+
+        # Um prêmio ganho por um cliente-indicador, ao completar o número de
+        # indicações positivas da configuração acima. `valor` fica congelado
+        # no momento da concessão — se o Master mudar o valor padrão depois,
+        # os prêmios já concedidos não mudam de tamanho.
+        #
+        # status: disponivel -> aplicado (congelado num cupom, ver
+        # cupons.valor_recompensa_aplicada) -> ou de volta a disponivel, se o
+        # cupom em que tinha sido aplicado for trocado ou não for usado.
+        # Um prêmio disponível que passa da `validade` vira 'expirado'.
+        f'''CREATE TABLE IF NOT EXISTS recompensas_indicacao (
+            id {serial},
+            cliente_id INTEGER NOT NULL,
+            valor {real} NOT NULL,
+            indicacoes_completas INTEGER NOT NULL,
+            status TEXT DEFAULT 'disponivel',
+            data_concessao TEXT NOT NULL,
+            validade TEXT,
+            cupom_id INTEGER,
+            data_aplicacao TEXT
+        )''',
     ]
 
 
@@ -402,6 +465,24 @@ COLUNAS_NOVAS = {
         ('reset_token_hash', 'TEXT', 'TEXT'),
         ('reset_expira', 'TEXT', 'TEXT'),
         ('reset_pedido_em', 'TEXT', 'TEXT'),
+        # Programa de indicação ("traga um amigo").
+        #
+        # codigo_indicacao: o código pessoal deste cliente, para ele
+        # compartilhar (link tipo cajsky.com.br/?ref=CJ123). Gerado sozinho
+        # no cadastro, a partir do próprio id — não precisa checar
+        # duplicidade porque o id já é único.
+        #
+        # indicado_por_id: se este cliente entrou por um link de indicação,
+        # aqui fica o id de quem indicou. Fica vazio para quem se cadastrou
+        # sem link nenhum.
+        #
+        # indicacao_positiva_contada: fica 1 assim que este cliente usa o
+        # primeiro cupom de verdade (gerou E abasteceu). É o que impede a
+        # mesma indicação de ser contada de novo a cada abastecimento
+        # seguinte — só a PRIMEIRA vez conta ponto para quem indicou.
+        ('codigo_indicacao', 'TEXT', 'TEXT'),
+        ('indicado_por_id', 'INTEGER', 'INTEGER'),
+        ('indicacao_positiva_contada', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),
@@ -425,6 +506,10 @@ COLUNAS_NOVAS = {
         # visível no histórico, em vez de o cupom simplesmente sumir.
         ('trocado_por', 'INTEGER', 'INTEGER'),
         ('data_cancelamento', 'TEXT', 'TEXT'),
+        # Valor do prêmio de indicação (se algum) congelado neste cupom no
+        # momento em que foi gerado — soma ao desconto normal na hora de
+        # dar baixa. Ver recompensas_indicacao.
+        ('valor_recompensa_aplicada', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
     ],
     'produtos': [
         ('desconto_valor', 'DOUBLE PRECISION DEFAULT 0', 'REAL DEFAULT 0'),
@@ -460,6 +545,19 @@ COLUNAS_NOVAS = {
         ('reset_token_hash', 'TEXT', 'TEXT'),
         ('reset_expira', 'TEXT', 'TEXT'),
         ('reset_pedido_em', 'TEXT', 'TEXT'),
+    ],
+    # Mínimos de litros do programa de indicação. Ficam aqui também (e não
+    # só no CREATE TABLE) para o caso de a tabela já ter sido criada numa
+    # publicação anterior sem estas colunas.
+    'config_indicacoes': [
+        ('minimo_litros_combustivel', 'DOUBLE PRECISION DEFAULT 20', 'REAL DEFAULT 20'),
+        ('minimo_litros_oleo', 'DOUBLE PRECISION DEFAULT 1', 'REAL DEFAULT 1'),
+        ('data_fim_campanha', 'TEXT', 'TEXT'),
+        ('validade_premio_dias', 'INTEGER DEFAULT 30', 'INTEGER DEFAULT 30'),
+        ('validade_indicacao_dias', 'INTEGER DEFAULT 90', 'INTEGER DEFAULT 90'),
+    ],
+    'recompensas_indicacao': [
+        ('validade', 'TEXT', 'TEXT'),
     ],
 }
 
@@ -498,6 +596,28 @@ def init_db():
                 (id, nome, tipo, preco_atual, unidade, icone)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', p)
+
+    # Configuração padrão do programa de indicação: a cada 3 indicações que
+    # viraram cliente de verdade, um prêmio de R$ 10,00. O Master ajusta os
+    # dois números depois, pelo painel — isto aqui só garante que a linha
+    # exista desde o primeiro dia (o resto do código sempre espera achar 1).
+    if pg:
+        cursor.execute('''
+            INSERT INTO config_indicacoes
+            (id, meta_indicacoes, valor_recompensa,
+             minimo_litros_combustivel, minimo_litros_oleo,
+             validade_premio_dias, validade_indicacao_dias, ativo)
+            VALUES (1, 3, 10.00, 20, 1, 30, 90, 1)
+            ON CONFLICT (id) DO NOTHING
+        ''')
+    else:
+        cursor.execute('''
+            INSERT OR IGNORE INTO config_indicacoes
+            (id, meta_indicacoes, valor_recompensa,
+             minimo_litros_combustivel, minimo_litros_oleo,
+             validade_premio_dias, validade_indicacao_dias, ativo)
+            VALUES (1, 3, 10.00, 20, 1, 30, 90, 1)
+        ''')
 
     # Renomeações de produto (mantém o histórico de abastecimentos ligado ao mesmo id)
     renomear = [

@@ -405,6 +405,151 @@ def registrar_auditoria(cursor, admin, acao, produto_id=None, produto_nome=None,
     ))
 
 
+def ler_config_indicacoes(cursor):
+    """Linha única de configuração do programa de indicação (ou None)."""
+    cursor.execute('''
+        SELECT meta_indicacoes, valor_recompensa, ativo,
+               minimo_litros_combustivel, minimo_litros_oleo,
+               data_fim_campanha, validade_premio_dias, validade_indicacao_dias
+        FROM config_indicacoes LIMIT 1
+    ''')
+    return cursor.fetchone()
+
+
+def campanha_indicacao_encerrada(config):
+    """A campanha tem data de fim e ela já passou? (vazio = sem prazo)"""
+    if not config:
+        return False
+    fim = (config['data_fim_campanha'] or '').strip()[:10]
+    return bool(fim) and agora().strftime('%Y-%m-%d') > fim
+
+
+def expirar_premios_vencidos(cursor, cliente_id=None):
+    """
+    Marca como 'expirado' os prêmios disponíveis que passaram da validade.
+
+    Feito de forma preguiçosa — na hora em que alguém olha os prêmios de um
+    cliente — para não depender de nenhuma rotina agendada, que este projeto
+    não tem. Prêmio já aplicado a um cupom não é tocado aqui.
+    """
+    hoje = agora().strftime('%Y-%m-%d')
+    sql = ("UPDATE recompensas_indicacao SET status = 'expirado' "
+           "WHERE status = 'disponivel' AND validade IS NOT NULL AND validade < ?")
+    params = [hoje]
+    if cliente_id is not None:
+        sql += ' AND cliente_id = ?'
+        params.append(cliente_id)
+    cursor.execute(sql, params)
+
+
+def minimo_litros_da_categoria(config, categoria):
+    """Quantos litros um abastecimento precisa ter para positivar a indicação."""
+    if not config:
+        return 20
+    if (categoria or 'combustivel') == 'oleo':
+        return config['minimo_litros_oleo'] if config['minimo_litros_oleo'] is not None else 1
+    return (config['minimo_litros_combustivel']
+            if config['minimo_litros_combustivel'] is not None else 20)
+
+
+def _processar_indicacao_positiva(cursor, indicado_id, indicador_id,
+                                  quantidade, categoria):
+    """
+    Chamada quando um cliente indicado dá baixa num cupom. Só conta ponto
+    para quem indicou se o abastecimento atingir o mínimo de litros da
+    categoria — decisão do Edmundo (23/08): indicação só vale se virar
+    cliente de verdade, não se o amigo puser 1 litro de combustível só para
+    fechar a conta.
+
+    Se não atingir, NADA é marcado: a indicação continua aguardando e será
+    contada no primeiro abastecimento que atingir o mínimo, mesmo semanas
+    depois. Ninguém perde a indicação por causa de um abastecimento pequeno.
+
+    Cada indicado vale UM ponto na vida inteira: assim que é contado,
+    `indicacao_positiva_contada` fica em 1 e ele nunca mais gera positivação
+    nenhuma, por mais que abasteça. Quem já rendeu o brinde está encerrado.
+
+    Quando conta, a cada N indicações positivas (configurável pelo Master)
+    nasce um cupom-prêmio. N sempre bate — se a meta é 3, o prêmio nasce nas
+    indicações 3, 6, 9… — porque a contagem acontece aqui, uma vez só para
+    cada indicado, nunca duas.
+    """
+    config = ler_config_indicacoes(cursor)
+
+    # Programa desligado: não queima a indicação. Ela fica esperando o
+    # programa voltar, em vez de sumir sem nunca ter valido nada.
+    if not config or not config['ativo']:
+        return
+
+    # Campanha com data de fim já passada: para de gerar ponto e prêmio novo.
+    # Também não marca nada — se o Edmundo prorrogar o prazo, tudo volta a
+    # valer de onde parou.
+    if campanha_indicacao_encerrada(config):
+        return
+
+    minimo = minimo_litros_da_categoria(config, categoria)
+    if (quantidade or 0) < minimo:
+        return
+
+    # Prazo da indicação pendente: quem se cadastrou pelo link tem um número
+    # de dias para abastecer e virar ponto. Passou disso, não conta mais —
+    # mas também não marca, para o caso de o prazo ser aumentado depois.
+    dias_ind = config['validade_indicacao_dias']
+    if dias_ind and dias_ind > 0:
+        cursor.execute('SELECT data_criacao FROM clientes WHERE id = ?', (indicado_id,))
+        linha_cad = cursor.fetchone()
+        cadastro = str((linha_cad['data_criacao'] if linha_cad else '') or '')[:10]
+        if cadastro:
+            try:
+                limite = (datetime.strptime(cadastro, '%Y-%m-%d')
+                          + timedelta(days=int(dias_ind))).strftime('%Y-%m-%d')
+                if agora().strftime('%Y-%m-%d') > limite:
+                    return
+            except ValueError:
+                pass   # data em formato inesperado: não bloqueia o ponto
+
+    cursor.execute(
+        'UPDATE clientes SET indicacao_positiva_contada = 1 WHERE id = ?',
+        (indicado_id,)
+    )
+
+    cursor.execute('''
+        SELECT COUNT(*) AS n FROM clientes
+        WHERE indicado_por_id = ? AND indicacao_positiva_contada = 1
+    ''', (indicador_id,))
+    total = (cursor.fetchone()['n'] or 0)
+
+    meta = config['meta_indicacoes'] or 3
+    if meta <= 0 or total % meta != 0:
+        return
+
+    # Validade do prêmio: congelada aqui, junto com o valor. Mudar a
+    # configuração depois não encurta nem alonga prêmios já concedidos.
+    dias_premio = config['validade_premio_dias']
+    validade = None
+    if dias_premio and dias_premio > 0:
+        validade = (agora() + timedelta(days=int(dias_premio))).strftime('%Y-%m-%d')
+
+    cursor.execute('''
+        INSERT INTO recompensas_indicacao
+        (cliente_id, valor, indicacoes_completas, status, data_concessao, validade)
+        VALUES (?, ?, ?, 'disponivel', ?, ?)
+    ''', (
+        indicador_id,
+        config['valor_recompensa'],
+        total,
+        agora().strftime('%Y-%m-%d %H:%M:%S'),
+        validade
+    ))
+
+    registrar_auditoria(
+        cursor, None, 'recompensa_indicacao_gerada',
+        detalhe=(f'Cliente #{indicador_id} completou {total} indicações e ganhou '
+                 f'um cupom-prêmio de R$ {config["valor_recompensa"]:.2f}'
+                 + (f' (válido até {validade})' if validade else ''))
+    )
+
+
 def desconto_por_unidade(preco, valor, tipo):
     """Converte o desconto informado em reais por unidade."""
     return preco * (valor / 100) if tipo == 'percentual' else valor
@@ -631,6 +776,32 @@ def cadastro():
             conn.close()
             return jsonify({'erro': 'CPF já cadastrado'}), 400
 
+        # ---- programa de indicação: "quem te trouxe?" ----
+        #
+        # O código vem do link que o indicador compartilhou (?ref=CJ123). Não
+        # bloqueia o cadastro se o código não existir ou estiver errado — só
+        # não liga a indicação a ninguém, silenciosamente. Link velho, link
+        # digitado errado ou promoção que já não vale mais não pode impedir
+        # a pessoa de virar cliente.
+        #
+        # Trava simples contra autoindicação: o CPF já é único (então a
+        # mesma pessoa não abre duas contas), mas nada impede alguém de
+        # cadastrar a esposa/o sócio com o próprio telefone só para acumular
+        # prêmio. Se o telefone do novo cadastro bater com o do indicador,
+        # a indicação não é contabilizada — o cadastro segue normal.
+        indicado_por_id = None
+        codigo_usado = re.sub(r'[^A-Za-z0-9]', '', str(data.get('indicado_por_codigo') or '')).upper()
+        if codigo_usado:
+            cursor.execute(
+                'SELECT id, tel FROM clientes WHERE UPPER(codigo_indicacao) = ?',
+                (codigo_usado,)
+            )
+            indicador = cursor.fetchone()
+            tel_novo = re.sub(r'\D', '', str(data.get('tel') or ''))
+            tel_indicador = re.sub(r'\D', '', str(indicador['tel'] or '')) if indicador else ''
+            if indicador and (not tel_novo or tel_novo != tel_indicador):
+                indicado_por_id = indicador['id']
+
         cursor.execute('SELECT id FROM clientes WHERE LOWER(email) = LOWER(?)',
                        ((data.get('email') or '').strip(),))
         if cursor.fetchone():
@@ -652,8 +823,8 @@ def cadastro():
              aceita_promocoes, data_consentimento, aceita_parceiros, data_consentimento_parceiros,
              placa, data_placa, registro_tipo, registro_numero, empresa_convenio,
              foto_comprovante, foto_comprovante_tipo, data_foto_comprovante,
-             empresa_convenio_id, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             empresa_convenio_id, status, indicado_por_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cpf,
             data.get('nome'),
@@ -677,11 +848,20 @@ def cadastro():
             tipo_comprovante,
             agora_iso,
             empresa_convenio_id,
-            status_inicial
+            status_inicial,
+            indicado_por_id
         ))
 
-        conn.commit()
         cliente_id = cursor.lastrowid
+
+        # O código de indicação deste cliente novo é gerado a partir do
+        # próprio id — "CJ" + id. Simples, sem chance de colidir com outro
+        # cliente (o id já é único) e sem precisar checar nada no banco.
+        meu_codigo_indicacao = f'CJ{cliente_id}'
+        cursor.execute('UPDATE clientes SET codigo_indicacao = ? WHERE id = ?',
+                       (meu_codigo_indicacao, cliente_id))
+
+        conn.commit()
         conn.close()
 
         if status_inicial == 'pendente' and sem_email_corporativo:
@@ -701,7 +881,9 @@ def cadastro():
             'placa': placa,
             'placa_ja_cadastrada': placa_repetida,
             'status': status_inicial,
-            'aguardando_aprovacao': status_inicial == 'pendente'
+            'aguardando_aprovacao': status_inicial == 'pendente',
+            'codigo_indicacao': meu_codigo_indicacao,
+            'veio_de_indicacao': bool(indicado_por_id)
         }), 201
 
     except Exception as e:
@@ -723,19 +905,31 @@ def login():
         # conseguia mais entrar digitando "joao@gmail.com".
         cursor.execute('''
             SELECT id, nome, email, senha_hash, placa, ocupacao,
-                   status, motivo_recusa, empresa_convenio
+                   status, motivo_recusa, empresa_convenio, codigo_indicacao
             FROM clientes WHERE LOWER(email) = LOWER(?)
         ''', ((email or '').strip(),))
         cliente = cursor.fetchone()
-        conn.close()
 
         if not cliente or not check_password_hash(cliente['senha_hash'], senha):
+            conn.close()
             return jsonify({'erro': 'Email ou senha incorretos'}), 401
 
         # O login continua funcionando com cadastro pendente de propósito: a
         # pessoa precisa conseguir entrar para acompanhar a análise. O que não
         # sai é o cupom.
         situacao = (cliente['status'] or 'ativo').lower()
+
+        # Clientes de antes do programa de indicação existir não têm código
+        # ainda — gera na hora do primeiro login, para não deixar ninguém
+        # sem link para compartilhar.
+        codigo_indicacao = cliente['codigo_indicacao']
+        if not codigo_indicacao:
+            codigo_indicacao = f'CJ{cliente["id"]}'
+            cursor.execute('UPDATE clientes SET codigo_indicacao = ? WHERE id = ?',
+                           (codigo_indicacao, cliente['id']))
+            conn.commit()
+
+        conn.close()
 
         return jsonify({
             'cliente_id': cliente['id'],
@@ -746,6 +940,7 @@ def login():
             'status': situacao,
             'empresa_convenio': cliente['empresa_convenio'],
             'motivo_recusa': cliente['motivo_recusa'],
+            'codigo_indicacao': codigo_indicacao,
             'mensagem': 'Login realizado com sucesso'
         }), 200
 
@@ -1353,6 +1548,47 @@ def gerar_cupom():
         quantidade_permitida = produto['limite_litros'] or 50
         economia_total = desconto_por_unidade * quantidade_permitida
 
+        # ---- programa de indicação: prêmio pronto para usar? ----
+        #
+        # Se este cupom está trocando um outro que já tinha um prêmio
+        # congelado (troca de produto antes de usar), devolve o prêmio para
+        # "disponível" primeiro — senão a troca faria o cliente perder o
+        # prêmio, ou pior, permitiria pegar um segundo por engano.
+        if cupom_a_cancelar:
+            cursor.execute('''
+                UPDATE recompensas_indicacao
+                SET status = 'disponivel', cupom_id = NULL, data_aplicacao = NULL
+                WHERE cupom_id = ? AND status = 'aplicado'
+            ''', (cupom_a_cancelar,))
+
+        # Prêmio que ficou preso num cupom de outro dia que nunca foi usado
+        # (o cupom vale só no dia em que nasceu) volta para a prateleira. Sem
+        # isto, esquecer de abastecer num dia custaria o prêmio inteiro ao
+        # cliente — e ele não tem como saber por quê. A limpeza é feita aqui,
+        # na hora de gerar o próximo cupom, para não depender de nenhuma
+        # rotina agendada.
+        cursor.execute('''
+            UPDATE recompensas_indicacao
+            SET status = 'disponivel', cupom_id = NULL, data_aplicacao = NULL
+            WHERE cliente_id = ? AND status = 'aplicado' AND cupom_id IN (
+                SELECT id FROM cupons
+                WHERE cliente_id = ?
+                  AND COALESCE(status, '') <> 'completo'
+                  AND data_geracao < ?
+            )
+        ''', (cliente_id, cliente_id, hoje))
+
+        # Prêmio que passou da validade vira 'expirado' antes de escolher.
+        expirar_premios_vencidos(cursor, cliente_id)
+
+        cursor.execute('''
+            SELECT id, valor FROM recompensas_indicacao
+            WHERE cliente_id = ? AND status = 'disponivel'
+            ORDER BY id ASC LIMIT 1
+        ''', (cliente_id,))
+        recompensa = cursor.fetchone()
+        valor_recompensa_congelada = round(recompensa['valor'], 2) if recompensa else 0
+
         # Gera cupom (preço e desconto ficam congelados neste cupom)
         qr_data, qr_image = gerar_qrcode()
 
@@ -1360,8 +1596,9 @@ def gerar_cupom():
             INSERT INTO cupons
             (cliente_id, produto_id, qrcode, data_geracao, quantidade_permitida,
              quantidade_utilizada, status, preco_unitario, desconto_unitario,
-             desconto_valor, desconto_tipo, categoria, liberacao_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             desconto_valor, desconto_tipo, categoria, liberacao_id,
+             valor_recompensa_aplicada)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             cliente_id,
             produto_id,
@@ -1375,10 +1612,18 @@ def gerar_cupom():
             desconto_valor,
             desconto_tipo,
             categoria,
-            liberacao_usada
+            liberacao_usada,
+            valor_recompensa_congelada
         ))
 
         cupom_id = cursor.lastrowid
+
+        if recompensa:
+            cursor.execute('''
+                UPDATE recompensas_indicacao
+                SET status = 'aplicado', cupom_id = ?, data_aplicacao = ?
+                WHERE id = ?
+            ''', (cupom_id, agora().strftime('%Y-%m-%d %H:%M:%S'), recompensa['id']))
 
         # Troca confirmada: o cupom antigo é cancelado e passa a apontar para o
         # novo. Cancelar em vez de apagar mantém a troca visível no histórico.
@@ -1421,7 +1666,10 @@ def gerar_cupom():
             'desconto_valor': desconto_valor,
             'desconto_por_unidade': round(desconto_por_unidade, 2),
             'quantidade_permitida': quantidade_permitida,
-            'economia_total': round(economia_total, 2),
+            # A economia por litro é o cálculo de sempre; o prêmio de
+            # indicação é um valor fixo, somado uma vez só (não por litro).
+            'economia_total': round(economia_total + valor_recompensa_congelada, 2),
+            'bonus_indicacao': valor_recompensa_congelada,
             'uso_unico': USO_UNICO,
             'mensagem': 'QR code gerado com sucesso!'
         }), 200
@@ -1732,27 +1980,67 @@ def usar_cupom():
 
         # nunca deixar o desconto passar do valor da compra
         valor_desconto = min(valor_desconto, valor_sem_desconto)
-        valor_final = valor_sem_desconto - valor_desconto
+        valor_final_sem_premio = valor_sem_desconto - valor_desconto
 
         # Terceira camada, a última antes do dinheiro sair: se este
         # abastecimento fecha abaixo do custo, não registra. Vale para cupons
         # emitidos antes das travas acima existirem, e para o caso do custo ter
         # subido depois que o cupom foi gerado. Decisão do Edmundo (19/08):
         # melhor o constrangimento na pista do que o prejuízo.
+        #
+        # A conta aqui é feita SEM o prêmio de indicação de propósito — ver o
+        # bloco logo abaixo.
         custo_unitario = round((produto['preco_custo'] if produto else 0) or 0, 2)
         if custo_unitario > 0:
             custo_total = round(custo_unitario * quantidade_agora, 2)
-            if round(valor_final, 2) < custo_total:
+            if round(valor_final_sem_premio, 2) < custo_total:
                 conn.close()
                 return jsonify({
                     'erro': f'ABASTECIMENTO NÃO AUTORIZADO — este cupom está com desconto '
                             f'maior que a margem do produto e daria prejuízo de '
-                            f'R$ {custo_total - valor_final:.2f}. Não libere a bomba e '
-                            f'avise a gerência.',
+                            f'R$ {custo_total - valor_final_sem_premio:.2f}. Não libere a '
+                            f'bomba e avise a gerência.',
                     'motivo': 'desconto_abaixo_do_custo',
-                    'valor_cobrado': round(valor_final, 2),
+                    'valor_cobrado': round(valor_final_sem_premio, 2),
                     'custo': custo_total
                 }), 409
+
+        # ---- prêmio do programa de indicação ----
+        #
+        # Decisão do Edmundo (23/08): o prêmio é **despesa de marketing**, não
+        # desconto de preço — ele decidiu gastar R$ 10 para trazer 3 clientes
+        # novos. Por isso fica FORA da trava de margem acima: a margem do
+        # combustível é fina (uns R$ 0,42/L no etanol), e se o prêmio entrasse
+        # na conta da trava o motorista precisaria abastecer uns 24 litros só
+        # para o prêmio "caber" — na prática o prêmio seria recusado na bomba
+        # quase sempre, e o cliente ficaria com um brinde que não funciona.
+        #
+        # A trava continua fazendo o trabalho para o qual foi criada: pegar
+        # desconto de preço mal configurado (o zero a mais na tela de preços).
+        #
+        # O que impede alguém de torrar o prêmio em 2 litros é o mesmo mínimo
+        # de litros da positivação. Abaixo do mínimo o prêmio não entra e
+        # volta para a prateleira — o cliente não perde nada, usa depois.
+        bonus_indicacao = cupom['valor_recompensa_aplicada'] or 0
+        premio_adiado = False
+
+        if bonus_indicacao > 0:
+            config_ind = ler_config_indicacoes(cursor)
+            minimo_premio = minimo_litros_da_categoria(config_ind, cupom['categoria'])
+            if quantidade_agora < minimo_premio:
+                cursor.execute('''
+                    UPDATE recompensas_indicacao
+                    SET status = 'disponivel', cupom_id = NULL, data_aplicacao = NULL
+                    WHERE cupom_id = ? AND status = 'aplicado'
+                ''', (cupom['id'],))
+                cursor.execute(
+                    'UPDATE cupons SET valor_recompensa_aplicada = 0 WHERE id = ?',
+                    (cupom['id'],))
+                bonus_indicacao = 0
+                premio_adiado = True
+
+        valor_desconto = min(valor_desconto + bonus_indicacao, valor_sem_desconto)
+        valor_final = valor_sem_desconto - valor_desconto
 
         turno = obter_turno()
 
@@ -1813,6 +2101,23 @@ def usar_cupom():
                      f"cobrado R$ {valor_final:.2f} (desconto R$ {valor_desconto:.2f})")
         )
 
+        # Programa de indicação: este é o momento em que "cadastro" vira de
+        # fato "cliente" — gerou cupom E abasteceu. Duas travas: só a
+        # PRIMEIRA vez de cada indicado conta ponto (indicacao_positiva_contada)
+        # e o abastecimento precisa atingir o mínimo de litros da categoria.
+        # Se não atingir, a indicação fica aguardando o próximo abastecimento.
+        if novo_status == 'completo':
+            cursor.execute(
+                'SELECT indicado_por_id, indicacao_positiva_contada FROM clientes WHERE id = ?',
+                (cupom['cliente_id'],)
+            )
+            cliente_indicado = cursor.fetchone()
+            if (cliente_indicado and cliente_indicado['indicado_por_id']
+                    and not cliente_indicado['indicacao_positiva_contada']):
+                _processar_indicacao_positiva(
+                    cursor, cupom['cliente_id'], cliente_indicado['indicado_por_id'],
+                    quantidade_agora, cupom['categoria'])
+
         conn.commit()
         conn.close()
 
@@ -1832,6 +2137,14 @@ def usar_cupom():
             'valor_original': round(valor_sem_desconto, 2),
             'valor_desconto': round(valor_desconto, 2),
             'valor_final': round(valor_final, 2),
+            'bonus_indicacao': round(bonus_indicacao, 2),
+            # Avisa a tela da pista quando o prêmio ficou para a próxima por
+            # causa do volume — senão o motorista acha que o brinde sumiu.
+            'premio_adiado': premio_adiado,
+            'premio_adiado_aviso': (
+                f'O prêmio de indicação não entrou neste abastecimento porque o '
+                f'volume ficou abaixo do mínimo. Ele continua guardado e entra '
+                f'no próximo cupom.' if premio_adiado else None),
             'cupom_status': novo_status,
             'quantidade_utilizada': nova_quantidade_utilizada,
             'quantidade_permitida': cupom['quantidade_permitida'],
@@ -3197,6 +3510,285 @@ def admin_alterar_empresa_convenio(empresa_id):
         conn.commit()
         conn.close()
         return jsonify({'mensagem': 'Convênio atualizado.'}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==================== PROGRAMA DE INDICAÇÃO ====================
+#
+# "Traga um amigo, ganhe um cupom." Cada cliente tem um código próprio
+# (ver clientes.codigo_indicacao) para compartilhar num link. A cada N
+# indicações que viraram cliente DE VERDADE — gerou cupom E abasteceu, não
+# só se cadastrou — quem indicou ganha um cupom-prêmio. N e o valor do
+# prêmio são configuráveis pelo Master (tabela config_indicacoes).
+#
+# A contagem em si acontece em usar_cupom() (é lá que se sabe que o
+# indicado realmente abasteceu) via _processar_indicacao_positiva(). As
+# rotas aqui embaixo só leem o que já foi contado e deixam o Master ajustar
+# a configuração.
+
+@app.route('/api/indicacao/verificar', methods=['GET'])
+def verificar_codigo_indicacao():
+    """
+    Confere se um código de indicação existe — usado na tela de cadastro
+    para mostrar "Fulano te indicou!" quando alguém abre um link de
+    indicação. Público de propósito, mas devolve só o primeiro nome: é uma
+    tela que qualquer um pode abrir sem estar logado.
+    """
+    try:
+        codigo = re.sub(r'[^A-Za-z0-9]', '', str(request.args.get('codigo') or '')).upper()
+        if not codigo:
+            return jsonify({'valido': False}), 200
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT nome FROM clientes WHERE UPPER(codigo_indicacao) = ?',
+            (codigo,)
+        )
+        indicador = cursor.fetchone()
+        conn.close()
+
+        if not indicador:
+            return jsonify({'valido': False}), 200
+
+        primeiro_nome = (indicador['nome'] or '').strip().split(' ')[0]
+        return jsonify({'valido': True, 'nome': primeiro_nome}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/cliente/<int:cliente_id>/indicacao', methods=['GET'])
+def minha_indicacao(cliente_id):
+    """
+    Tela "Indique e Ganhe" do cliente: o código dele, quantas indicações já
+    viraram cliente de verdade, quanto falta para o próximo prêmio e se já
+    tem algum prêmio pronto para usar no próximo cupom.
+    """
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id, nome, codigo_indicacao FROM clientes WHERE id = ?',
+                       (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        codigo_indicacao = cliente['codigo_indicacao']
+        if not codigo_indicacao:
+            codigo_indicacao = f'CJ{cliente_id}'
+            cursor.execute('UPDATE clientes SET codigo_indicacao = ? WHERE id = ?',
+                           (codigo_indicacao, cliente_id))
+            conn.commit()
+
+        cursor.execute('''
+            SELECT COUNT(*) AS n FROM clientes
+            WHERE indicado_por_id = ? AND indicacao_positiva_contada = 1
+        ''', (cliente_id,))
+        total_positivas = (cursor.fetchone()['n'] or 0)
+
+        cursor.execute('''
+            SELECT COUNT(*) AS n FROM clientes WHERE indicado_por_id = ?
+        ''', (cliente_id,))
+        total_cadastros = (cursor.fetchone()['n'] or 0)
+
+        expirar_premios_vencidos(cursor, cliente_id)
+
+        cursor.execute('''
+            SELECT COUNT(*) AS n, COALESCE(SUM(valor), 0) AS soma,
+                   MIN(validade) AS proxima_validade
+            FROM recompensas_indicacao WHERE cliente_id = ? AND status = 'disponivel'
+        ''', (cliente_id,))
+        disponiveis = cursor.fetchone()
+
+        config = ler_config_indicacoes(cursor)
+        conn.commit()
+        conn.close()
+
+        meta = (config['meta_indicacoes'] if config else 3) or 3
+        valor_recompensa = round((config['valor_recompensa'] if config else 10) or 0, 2)
+        encerrada = campanha_indicacao_encerrada(config)
+        programa_ativo = (bool(config['ativo']) if config else True) and not encerrada
+
+        faltam = meta - (total_positivas % meta) if programa_ativo else 0
+        if faltam == meta:
+            faltam = 0  # acabou de completar um ciclo — a próxima meta é do zero
+
+        return jsonify({
+            'codigo_indicacao': codigo_indicacao,
+            'programa_ativo': programa_ativo,
+            'campanha_encerrada': encerrada,
+            'data_fim_campanha': (config['data_fim_campanha'] if config else None) or None,
+            'meta_indicacoes': meta,
+            'valor_recompensa': valor_recompensa,
+            'minimo_litros_combustivel': minimo_litros_da_categoria(config, 'combustivel'),
+            'minimo_litros_oleo': minimo_litros_da_categoria(config, 'oleo'),
+            'validade_indicacao_dias': (config['validade_indicacao_dias'] if config else 90),
+            'total_cadastros_indicados': total_cadastros,
+            'total_indicacoes_positivas': total_positivas,
+            'faltam_para_o_proximo_premio': faltam,
+            'premios_disponiveis': disponiveis['n'] or 0,
+            'valor_premios_disponiveis': round(disponiveis['soma'] or 0, 2),
+            # Até quando o prêmio mais antigo em mãos vale — é o que o cliente
+            # precisa ver para não deixar vencer.
+            'premio_vence_em': disponiveis['proxima_validade']
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/indicacoes/config', methods=['GET'])
+@exige_admin
+def admin_config_indicacoes():
+    """Configuração atual do programa — qualquer usuário do painel pode ver."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        config = ler_config_indicacoes(cursor)
+        conn.close()
+        return jsonify({
+            'meta_indicacoes': (config['meta_indicacoes'] if config else 3) or 3,
+            'valor_recompensa': round((config['valor_recompensa'] if config else 10) or 0, 2),
+            'minimo_litros_combustivel': minimo_litros_da_categoria(config, 'combustivel'),
+            'minimo_litros_oleo': minimo_litros_da_categoria(config, 'oleo'),
+            'data_fim_campanha': (config['data_fim_campanha'] if config else None) or '',
+            'validade_premio_dias': (config['validade_premio_dias'] if config else 30),
+            'validade_indicacao_dias': (config['validade_indicacao_dias'] if config else 90),
+            'campanha_encerrada': campanha_indicacao_encerrada(config),
+            'ativo': bool(config['ativo']) if config else True
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/indicacoes/config', methods=['POST'])
+@exige_master
+def admin_atualizar_config_indicacoes():
+    """
+    Só o Master mexe aqui — é o mesmo motivo de preços e descontos: um valor
+    de prêmio errado sai dinheiro do caixa sem ninguém perceber na hora.
+    Mudar isto NÃO afeta prêmios já concedidos (o valor fica congelado em
+    cada recompensa no momento em que ela nasce).
+    """
+    try:
+        data = request.get_json() or {}
+
+        try:
+            meta = int(data.get('meta_indicacoes'))
+        except (TypeError, ValueError):
+            return jsonify({'erro': 'Informe de quantas em quantas indicações o prêmio nasce.'}), 400
+        if meta < 1:
+            return jsonify({'erro': 'A meta de indicações precisa ser pelo menos 1.'}), 400
+
+        try:
+            valor = float(data.get('valor_recompensa'))
+        except (TypeError, ValueError):
+            return jsonify({'erro': 'Informe o valor do prêmio.'}), 400
+        if valor < 0:
+            return jsonify({'erro': 'O valor do prêmio não pode ser negativo.'}), 400
+
+        try:
+            min_comb = float(data.get('minimo_litros_combustivel'))
+            min_oleo = float(data.get('minimo_litros_oleo'))
+        except (TypeError, ValueError):
+            return jsonify({
+                'erro': 'Informe os litros mínimos de combustível e de óleo.'
+            }), 400
+        if min_comb < 0 or min_oleo < 0:
+            return jsonify({'erro': 'Os litros mínimos não podem ser negativos.'}), 400
+
+        # ---- os três prazos ----
+        # Data de fim vazia = campanha sem prazo. É o padrão.
+        fim = (data.get('data_fim_campanha') or '').strip()[:10] or None
+        if fim:
+            try:
+                datetime.strptime(fim, '%Y-%m-%d')
+            except ValueError:
+                return jsonify({
+                    'erro': 'Data de encerramento inválida. Use o seletor de data.'
+                }), 400
+
+        try:
+            val_premio = int(data.get('validade_premio_dias') or 0)
+            val_indicacao = int(data.get('validade_indicacao_dias') or 0)
+        except (TypeError, ValueError):
+            return jsonify({'erro': 'Os prazos em dias precisam ser números inteiros.'}), 400
+        if val_premio < 0 or val_indicacao < 0:
+            return jsonify({'erro': 'Os prazos em dias não podem ser negativos.'}), 400
+
+        ativo = 1 if data.get('ativo', True) in (True, 1, '1', 'true') else 0
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE config_indicacoes
+            SET meta_indicacoes = ?, valor_recompensa = ?,
+                minimo_litros_combustivel = ?, minimo_litros_oleo = ?,
+                data_fim_campanha = ?, validade_premio_dias = ?,
+                validade_indicacao_dias = ?, ativo = ?,
+                atualizado_por = ?, data_atualizacao = ?
+            WHERE id = 1
+        ''', (meta, valor, min_comb, min_oleo, fim, val_premio, val_indicacao,
+              ativo, request.admin['usuario'],
+              agora().strftime('%Y-%m-%d %H:%M:%S')))
+
+        registrar_auditoria(
+            cursor, request.admin, 'config_indicacoes_alterada',
+            campo='programa de indicação',
+            valor_novo=(f'a cada {meta} indicações, prêmio de R$ {valor:.2f}; '
+                        f'mínimo de {min_comb:g} L (combustível) e {min_oleo:g} L (óleo); '
+                        f'campanha até {fim or "sem prazo"}; '
+                        f'prêmio vale {val_premio or "sem prazo"} dias; '
+                        f'indicação vale {val_indicacao or "sem prazo"} dias '
+                        f'({"ativo" if ativo else "desativado"})')
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({'mensagem': 'Configuração do programa de indicação atualizada.'}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/indicacoes', methods=['GET'])
+@exige_gerencia
+def admin_listar_indicacoes():
+    """Ranking de quem mais indica, para acompanhar a campanha."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT i.id AS indicador_id, i.nome AS indicador_nome,
+                   i.codigo_indicacao,
+                   COUNT(r.id) AS total_indicados,
+                   COALESCE(SUM(CASE WHEN r.indicacao_positiva_contada = 1 THEN 1 ELSE 0 END), 0)
+                       AS total_positivas
+            FROM clientes i
+            JOIN clientes r ON r.indicado_por_id = i.id
+            GROUP BY i.id, i.nome, i.codigo_indicacao
+            ORDER BY total_positivas DESC, total_indicados DESC
+        ''')
+        ranking = [dict(row) for row in cursor.fetchall()]
+
+        expirar_premios_vencidos(cursor)
+
+        cursor.execute('''
+            SELECT rec.id, rec.cliente_id, c.nome AS cliente_nome, rec.valor,
+                   rec.indicacoes_completas, rec.status, rec.data_concessao,
+                   rec.validade, rec.data_aplicacao
+            FROM recompensas_indicacao rec
+            JOIN clientes c ON c.id = rec.cliente_id
+            ORDER BY rec.id DESC
+            LIMIT 100
+        ''')
+        premios = [dict(row) for row in cursor.fetchall()]
+
+        conn.commit()
+        conn.close()
+        return jsonify({'ranking': ranking, 'premios': premios}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
