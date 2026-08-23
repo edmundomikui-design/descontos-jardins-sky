@@ -15,6 +15,14 @@
 <body class="auth-page">
     <div class="container">
         <div class="auth-card">
+            <!-- Aparece só quando alguém chega por um link de indicação
+                 (?ref=CODIGO) e o código é confirmado válido pelo servidor.
+                 Ver capturarCodigoIndicacao() em js/app-v2.js. -->
+            <p id="faixa-indicacao" hidden
+               style="background:#e8f5e9; border-left:4px solid #4CAF50; padding:10px 14px;
+                      border-radius:8px; margin-bottom:14px; font-weight:600; text-align:center;">
+            </p>
+
             <div class="logo">
                 <div class="logo-texto">
                     <h1>CAJ SKY</h1>
@@ -215,6 +223,6 @@
     </script>
     <script src="js/instalar.js?v=1"></script>
     <script src="js/comprovacao.js?v=1"></script>
-    <script src="js/app-v2.js?v=11"></script>
+    <script src="js/app-v2.js?v=13"></script>
 </body>
 </html>

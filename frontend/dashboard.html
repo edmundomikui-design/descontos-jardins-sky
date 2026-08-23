@@ -49,6 +49,35 @@
             <p class="msg-placa" id="msg-placa"></p>
         </div>
 
+        <!-- INDIQUE E GANHE (programa de indicação) -->
+        <div class="postos-card" id="indicacao-card" hidden
+             style="background:#fff8e1; border-left:4px solid #f9a825;">
+            <h3>🎁 Indique e Ganhe</h3>
+            <p id="indicacao-prazo" hidden
+               style="margin:4px 0; font-weight:600; color:#b45309;"></p>
+            <p id="indicacao-total" style="margin:4px 0;">—</p>
+            <p id="indicacao-progresso" style="margin:4px 0;">—</p>
+            <p id="indicacao-regra" style="margin:6px 0; font-size:13px; color:#555;">—</p>
+            <p id="indicacao-premio-pronto" hidden
+               style="background:#e8f5e9; border-left:4px solid #4CAF50; padding:8px 10px;
+                      border-radius:6px; margin:8px 0; font-weight:600;"></p>
+
+            <p style="margin:10px 0 4px; font-size:13px; color:#555;">Seu link de indicação:</p>
+            <p id="indicacao-link" style="font-weight:600; word-break:break-all;">—</p>
+            <p id="indicacao-copiado" hidden style="color:#2e7d32; font-size:13px; margin:4px 0;">
+                ✓ Link copiado!
+            </p>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                <button onclick="compartilharIndicacao()" class="btn btn-primary" type="button">
+                    📲 Compartilhar no WhatsApp
+                </button>
+                <button onclick="copiarLinkIndicacao()" class="btn" type="button">
+                    🔗 Copiar link
+                </button>
+            </div>
+        </div>
+
         <!-- PRODUTOS DISPONÍVEIS (NOVO) -->
         <div class="cupom-card">
             <div class="cupom-header">
@@ -203,6 +232,6 @@
     <script src="js/instalar.js?v=1"></script>
     <script src="js/comprovacao.js?v=1"></script>
     <script src="js/postos.js?v=1"></script>
-    <script src="js/app-v2.js?v=12"></script>
+    <script src="js/app-v2.js?v=13"></script>
 </body>
 </html>

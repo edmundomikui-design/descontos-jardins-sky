@@ -34,7 +34,9 @@
 // Trocar este número faz parte de publicar: sem isso, quem já tem o app
 // instalado continua abrindo as telas guardadas em cache e não vê nada do
 // que foi publicado.
-const CACHE = 'cajsky-v20';
+// v21: programa de indicação ("Indique e Ganhe") — link pessoal no painel do
+// cliente, faixa "fulano te indicou" no cadastro e aba nova no admin.
+const CACHE = 'cajsky-v21';
 
 const ESSENCIAIS = [
     '/',

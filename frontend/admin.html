@@ -105,6 +105,7 @@
         <button class="aba somente-gerencia" data-aba="convenios" onclick="trocarAba('convenios')">
             🏢 Convênios <span id="selo-pendentes" class="selo-pendentes" hidden>0</span>
         </button>
+        <button class="aba somente-gerencia" data-aba="indicacoes" onclick="trocarAba('indicacoes')">🎁 Indicações</button>
         <button class="aba somente-gerencia" data-aba="suspeitas" onclick="trocarAba('suspeitas')">🕵️ Padrões Suspeitos</button>
         <button class="aba" data-aba="auditoria" onclick="trocarAba('auditoria')">🔍 Histórico de Alterações</button>
         <button class="aba somente-master" data-aba="liberacoes" onclick="trocarAba('liberacoes')">🎟️ Liberar cupom extra</button>
@@ -339,6 +340,101 @@
         </div>
     </section>
 
+    <!-- ===== PROGRAMA DE INDICAÇÃO ===== -->
+    <section id="aba-indicacoes" class="conteudo" style="display:none;">
+        <p class="ajuda">
+            Cada cliente tem um link próprio para compartilhar. A cada N indicações que viraram
+            cliente <strong>de verdade</strong> — gerou cupom E fez um abastecimento que atinge
+            o mínimo de litros, não só se cadastrou — quem indicou ganha um cupom-prêmio, que
+            entra sozinho no próximo abastecimento dele, somado ao desconto normal.
+        </p>
+
+        <div class="aviso-trava">
+            🔒 <strong>Indicação só conta com abastecimento de verdade.</strong>
+            Cada indicado precisa fazer <strong>um</strong> abastecimento que atinja o mínimo
+            de litros abaixo, e vale <strong>uma vez só na vida</strong> — quem já rendeu o
+            prêmio não gera mais nenhuma positivação. Abasteceu pouco? A indicação fica
+            aguardando e é contada no primeiro abastecimento que atingir o mínimo.
+            <br><br>
+            O mesmo mínimo vale para <strong>usar</strong> o prêmio: num abastecimento menor
+            o prêmio não entra e volta para a prateleira do cliente, para a próxima vez.
+            O prêmio é despesa de marketing e <strong>não passa pela trava de margem</strong> —
+            a trava continua valendo normalmente para o desconto de preço.
+        </div>
+
+        <!-- Configuração (só Master: valor de prêmio errado sai dinheiro do caixa) -->
+        <div class="card somente-master">
+            <h3>Configuração do prêmio</h3>
+            <div class="filtros">
+                <label>A cada quantas indicações
+                    <input type="number" id="indicacoes-meta" min="1" value="3">
+                </label>
+                <label>Valor do prêmio (R$)
+                    <input type="number" id="indicacoes-valor" min="0" step="0.01" value="10.00">
+                </label>
+                <label>Mínimo de litros — combustível
+                    <input type="number" id="indicacoes-min-combustivel" min="0" step="0.5" value="20">
+                </label>
+                <label>Mínimo de litros — óleo
+                    <input type="number" id="indicacoes-min-oleo" min="0" step="0.5" value="1">
+                </label>
+                <label style="display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="indicacoes-ativo" checked style="width:auto;">
+                    Programa ativo
+                </label>
+            </div>
+
+            <h4 style="margin:18px 0 8px;">Prazos</h4>
+            <div class="filtros">
+                <label>Campanha vale até
+                    <input type="date" id="indicacoes-fim-campanha">
+                </label>
+                <label>Prêmio vence em (dias)
+                    <input type="number" id="indicacoes-validade-premio" min="0" value="30">
+                </label>
+                <label>Indicação vale por (dias)
+                    <input type="number" id="indicacoes-validade-indicacao" min="0" value="90">
+                </label>
+                <button onclick="salvarConfigIndicacoes()" class="btn btn-primary">
+                    💾 Salvar tudo
+                </button>
+            </div>
+
+            <p class="ajuda">
+                <strong>Campanha vale até:</strong> depois desta data o programa para de gerar
+                prêmios novos. Prêmios já ganhos continuam valendo até a validade deles.
+                Deixe em branco para campanha sem prazo.<br>
+                <strong>Prêmio vence em:</strong> quantos dias o cliente tem para usar um prêmio
+                ganho. <strong>Indicação vale por:</strong> quantos dias quem se cadastrou pelo
+                link tem para abastecer e virar ponto. Em qualquer um dos dois, <strong>0 = sem
+                prazo</strong>.
+            </p>
+            <p class="ajuda">
+                Mudar aqui não afeta prêmios já concedidos — valor e validade ficam congelados
+                no momento em que cada prêmio nasce. Mudar os mínimos de litros e os prazos vale
+                para as indicações que ainda não foram contadas.
+            </p>
+            <div id="indicacoes-config-aviso"></div>
+            <div id="indicacoes-config-msg"></div>
+        </div>
+
+        <!-- Ranking de quem mais indica -->
+        <div class="card">
+            <h3>Quem mais indica</h3>
+            <div id="indicacoes-ranking" class="rolagem">
+                <p class="vazio">Carregando…</p>
+            </div>
+        </div>
+
+        <!-- Histórico de prêmios concedidos -->
+        <div class="card">
+            <h3>Prêmios concedidos</h3>
+            <div id="indicacoes-premios" class="rolagem">
+                <p class="vazio">Carregando…</p>
+            </div>
+        </div>
+    </section>
+
     <!-- ===== PADRÕES SUSPEITOS ===== -->
     <section id="aba-suspeitas" class="conteudo" style="display:none;">
         <p class="ajuda">
@@ -535,6 +631,6 @@
     </section>
 </div>
 
-<script src="js/admin.js?v=5"></script>
+<script src="js/admin.js?v=6"></script>
 </body>
 </html>
