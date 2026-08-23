@@ -483,6 +483,16 @@ COLUNAS_NOVAS = {
         ('codigo_indicacao', 'TEXT', 'TEXT'),
         ('indicado_por_id', 'INTEGER', 'INTEGER'),
         ('indicacao_positiva_contada', 'INTEGER DEFAULT 0', 'INTEGER DEFAULT 0'),
+        # Campanha de frentistas (23/08). 'comum' | 'frentista'.
+        #
+        # Conta de frentista só nasce ou se converte pela mão do Master
+        # (POST /api/admin/frentistas) — nunca pelo cadastro público. Como o
+        # CPF já é único na tabela inteira, a mesma pessoa não consegue ter
+        # ao mesmo tempo uma conta de frentista e uma "comum" para escapar
+        # do limite semanal — precisaria de dois CPFs diferentes.
+        ('tipo_cliente', "TEXT DEFAULT 'comum'", "TEXT DEFAULT 'comum'"),
+        ('tipo_cliente_definido_por', 'TEXT', 'TEXT'),
+        ('tipo_cliente_definido_em', 'TEXT', 'TEXT'),
     ],
     'cupons': [
         ('quantidade_permitida', 'DOUBLE PRECISION DEFAULT 50', 'REAL DEFAULT 50'),

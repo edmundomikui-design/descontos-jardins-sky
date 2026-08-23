@@ -150,6 +150,17 @@ NOME_CATEGORIA = {
     'oleo': 'óleo',
 }
 
+# Frentista é um cliente diferenciado (decisão de 23/08): tem direito a
+# combustível uma vez a cada 7 dias corridos — mesmo mecanismo já usado no
+# óleo dos clientes comuns — e NENHUM direito a óleo. A trava existe para
+# não dar a ele a mesma liberdade de um cliente comum (1 combustível por
+# dia), que abriria brecha para gerar cupom e repassar pra fora da pista.
+# Conta de frentista só é criada pelo Master (ver /api/admin/frentistas) —
+# nunca pelo cadastro público — e o CPF já sendo único no banco impede a
+# mesma pessoa de ter, ao mesmo tempo, uma conta de frentista e outra
+# "comum" para escapar do limite.
+INTERVALO_FRENTISTA_COMBUSTIVEL_DIAS = 7
+
 # Quantos dias uma liberação do Master vale antes de expirar sozinha.
 # Sem prazo, uma liberação esquecida ficaria valendo para sempre.
 VALIDADE_LIBERACAO_DIAS = 7
@@ -1378,7 +1389,8 @@ def gerar_cupom():
 
         # Verifica cliente
         cursor.execute('''
-            SELECT id, nome, desconto_tipo, desconto_valor, status, motivo_recusa
+            SELECT id, nome, desconto_tipo, desconto_valor, status, motivo_recusa,
+                   tipo_cliente
             FROM clientes
             WHERE id = ?
         ''', (cliente_id,))
@@ -1422,96 +1434,129 @@ def gerar_cupom():
         #
         # Um cupom de combustível por dia e um de óleo por semana, contando a
         # categoria inteira e não o produto. Ver o bloco de constantes no topo.
+        #
+        # Frentista é um caso à parte: combustível vira "uma vez a cada 7 dias
+        # corridos" (em vez de por dia) e óleo é bloqueado por completo — a
+        # única saída para óleo é o Master liberar manualmente, mesma válvula
+        # de escape usada em qualquer outro limite deste sistema.
         hoje = agora().strftime('%Y-%m-%d')
         categoria = categoria_do_produto(produto['tipo'])
-        intervalo = INTERVALO_DIAS[categoria]
-        desde = (agora() - timedelta(days=intervalo - 1)).strftime('%Y-%m-%d')
+        tipo_cliente = (cliente['tipo_cliente'] or 'comum').strip().lower()
+        eh_frentista = (tipo_cliente == 'frentista')
 
-        # Cupons da mesma categoria dentro da janela. Cancelados não contam —
-        # cupom trocado antes de usar não pode consumir o direito do dia.
-        cursor.execute('''
-            SELECT c.id, c.status, c.data_geracao, c.qrcode,
-                   c.quantidade_permitida, c.quantidade_utilizada,
-                   p.nome AS produto_nome, p.id AS produto_id
-            FROM cupons c
-            LEFT JOIN produtos p ON p.id = c.produto_id
-            WHERE c.cliente_id = ?
-              AND COALESCE(c.categoria, CASE WHEN LOWER(p.tipo) = 'oleo'
-                                             THEN 'oleo' ELSE 'combustivel' END) = ?
-              AND c.data_geracao >= ?
-              AND COALESCE(c.status, '') <> 'cancelado'
-            ORDER BY c.id DESC
-        ''', (cliente_id, categoria, desde))
-        na_janela = cursor.fetchall()
-
-        if na_janela:
-            existente = na_janela[0]
-            ja_usado = (existente['status'] or '') in ('parcial', 'completo')
-
-            # Mesmo produto e ainda não usado: não é caso de troca nem de
-            # bloqueio — é o cliente reabrindo o cupom que já tem.
-            if not ja_usado and existente['produto_id'] == produto['id']:
+        if eh_frentista and categoria == 'oleo':
+            cursor.execute('''
+                SELECT id FROM liberacoes_extras
+                WHERE cliente_id = ? AND categoria IN ('oleo', 'qualquer')
+                  AND usada = 0 AND cancelada = 0 AND validade >= ?
+                ORDER BY id ASC
+            ''', (cliente_id, hoje))
+            liberacao = cursor.fetchone()
+            if not liberacao:
                 conn.close()
                 return jsonify({
-                    'erro': f'Você já tem um cupom de {produto["nome"]} em aberto hoje. '
-                            f'Ele está na sua tela inicial.',
-                    'ja_tem': True,
-                    'qrcode_data': existente['qrcode']
-                }), 400
+                    'erro': 'Cupom de óleo não faz parte do programa de frentistas. '
+                            'Fale com a gerência se for um caso especial.',
+                    'limite_atingido': True,
+                    'categoria': 'oleo'
+                }), 403
+            liberacao_usada = liberacao['id']
+            cupom_a_cancelar = None
+        else:
+            intervalo = (INTERVALO_FRENTISTA_COMBUSTIVEL_DIAS if eh_frentista
+                         else INTERVALO_DIAS[categoria])
+            desde = (agora() - timedelta(days=intervalo - 1)).strftime('%Y-%m-%d')
 
-            # Ainda não usado, produto diferente: pode trocar. Não gasta
-            # liberação nenhuma — o direito do dia continua sendo um só.
-            if not ja_usado:
-                if not data.get('confirmar_troca'):
+            # Cupons da mesma categoria dentro da janela. Cancelados não contam —
+            # cupom trocado antes de usar não pode consumir o direito do dia.
+            cursor.execute('''
+                SELECT c.id, c.status, c.data_geracao, c.qrcode,
+                       c.quantidade_permitida, c.quantidade_utilizada,
+                       p.nome AS produto_nome, p.id AS produto_id
+                FROM cupons c
+                LEFT JOIN produtos p ON p.id = c.produto_id
+                WHERE c.cliente_id = ?
+                  AND COALESCE(c.categoria, CASE WHEN LOWER(p.tipo) = 'oleo'
+                                                 THEN 'oleo' ELSE 'combustivel' END) = ?
+                  AND c.data_geracao >= ?
+                  AND COALESCE(c.status, '') <> 'cancelado'
+                ORDER BY c.id DESC
+            ''', (cliente_id, categoria, desde))
+            na_janela = cursor.fetchall()
+
+            if na_janela:
+                existente = na_janela[0]
+                ja_usado = (existente['status'] or '') in ('parcial', 'completo')
+
+                # Mesmo produto e ainda não usado: não é caso de troca nem de
+                # bloqueio — é o cliente reabrindo o cupom que já tem.
+                if not ja_usado and existente['produto_id'] == produto['id']:
                     conn.close()
                     return jsonify({
-                        'erro': f'Você já gerou um cupom de {existente["produto_nome"]} hoje.',
-                        'pode_trocar': True,
-                        'cupom_atual_id': existente['id'],
-                        'cupom_atual_produto': existente['produto_nome'],
-                        'produto_novo': produto['nome'],
-                        'mensagem': (f'Quer trocar o cupom de {existente["produto_nome"]} '
-                                     f'pelo de {produto["nome"]}? O anterior deixa de valer.')
-                    }), 409
-                # Confirmado: cancela o antigo mais abaixo, depois de saber o
-                # id do novo. Guarda a referência por enquanto.
-                cupom_a_cancelar = existente['id']
+                        'erro': f'Você já tem um cupom de {produto["nome"]} em aberto hoje. '
+                                f'Ele está na sua tela inicial.',
+                        'ja_tem': True,
+                        'qrcode_data': existente['qrcode']
+                    }), 400
+
+                # Ainda não usado, produto diferente: pode trocar. Não gasta
+                # liberação nenhuma — o direito do dia continua sendo um só.
+                if not ja_usado:
+                    if not data.get('confirmar_troca'):
+                        conn.close()
+                        return jsonify({
+                            'erro': f'Você já gerou um cupom de {existente["produto_nome"]} hoje.',
+                            'pode_trocar': True,
+                            'cupom_atual_id': existente['id'],
+                            'cupom_atual_produto': existente['produto_nome'],
+                            'produto_novo': produto['nome'],
+                            'mensagem': (f'Quer trocar o cupom de {existente["produto_nome"]} '
+                                         f'pelo de {produto["nome"]}? O anterior deixa de valer.')
+                        }), 409
+                    # Confirmado: cancela o antigo mais abaixo, depois de saber o
+                    # id do novo. Guarda a referência por enquanto.
+                    cupom_a_cancelar = existente['id']
+                else:
+                    cupom_a_cancelar = None
+
+                # Já usado dentro da janela: só passa com liberação do Master.
+                if ja_usado:
+                    cursor.execute('''
+                        SELECT id, motivo, liberado_por FROM liberacoes_extras
+                        WHERE cliente_id = ? AND categoria IN (?, 'qualquer')
+                          AND usada = 0 AND cancelada = 0 AND validade >= ?
+                        ORDER BY id ASC
+                    ''', (cliente_id, categoria, hoje))
+                    liberacao = cursor.fetchone()
+
+                    if not liberacao:
+                        conn.close()
+                        if eh_frentista:
+                            proxima = (datetime.strptime(existente['data_geracao'], '%Y-%m-%d')
+                                       + timedelta(days=intervalo)).strftime('%d/%m/%Y')
+                            aviso = (f'Você já usou seu cupom de combustível da semana. '
+                                     f'O próximo fica disponível em {proxima}.')
+                        elif categoria == 'oleo':
+                            proxima = (datetime.strptime(existente['data_geracao'], '%Y-%m-%d')
+                                       + timedelta(days=intervalo)).strftime('%d/%m/%Y')
+                            aviso = (f'Você já usou seu cupom de óleo. O próximo fica '
+                                     f'disponível em {proxima}.')
+                        else:
+                            aviso = ('Você já usou seu cupom de combustível hoje. '
+                                     'O próximo fica disponível amanhã.')
+                        return jsonify({
+                            'erro': aviso,
+                            'limite_atingido': True,
+                            'categoria': categoria,
+                            'produto_usado': existente['produto_nome']
+                        }), 403
+
+                    liberacao_usada = liberacao['id']
+                else:
+                    liberacao_usada = None
             else:
                 cupom_a_cancelar = None
-
-            # Já usado dentro da janela: só passa com liberação do Master.
-            if ja_usado:
-                cursor.execute('''
-                    SELECT id, motivo, liberado_por FROM liberacoes_extras
-                    WHERE cliente_id = ? AND categoria IN (?, 'qualquer')
-                      AND usada = 0 AND cancelada = 0 AND validade >= ?
-                    ORDER BY id ASC
-                ''', (cliente_id, categoria, hoje))
-                liberacao = cursor.fetchone()
-
-                if not liberacao:
-                    conn.close()
-                    if categoria == 'oleo':
-                        proxima = (datetime.strptime(existente['data_geracao'], '%Y-%m-%d')
-                                   + timedelta(days=intervalo)).strftime('%d/%m/%Y')
-                        aviso = (f'Você já usou seu cupom de óleo. O próximo fica '
-                                 f'disponível em {proxima}.')
-                    else:
-                        aviso = ('Você já usou seu cupom de combustível hoje. '
-                                 'O próximo fica disponível amanhã.')
-                    return jsonify({
-                        'erro': aviso,
-                        'limite_atingido': True,
-                        'categoria': categoria,
-                        'produto_usado': existente['produto_nome']
-                    }), 403
-
-                liberacao_usada = liberacao['id']
-            else:
                 liberacao_usada = None
-        else:
-            cupom_a_cancelar = None
-            liberacao_usada = None
 
         # Desconto do produto; se ainda não configurado, cai no desconto do cliente
         desconto_valor = produto['desconto_valor'] or 0
@@ -3789,6 +3834,200 @@ def admin_listar_indicacoes():
         conn.commit()
         conn.close()
         return jsonify({'ranking': ranking, 'premios': premios}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==================== CAMPANHA DE FRENTISTAS (23/08) ====================
+#
+# Frentista é um cliente diferenciado: 1 cupom de combustível a cada 7 dias
+# corridos (INTERVALO_FRENTISTA_COMBUSTIVEL_DIAS), zero cupom de óleo, e
+# participa do programa de indicação normalmente — pode indicar e ser
+# indicado, ganha o mesmo prêmio a cada 3 indicações positivadas.
+#
+# A conta só nasce ou se converte pela mão do Master, nunca pelo cadastro
+# público — é essa restrição de alçada, somada ao CPF já ser único na
+# tabela inteira, que fecha a brecha de um frentista se passar por cliente
+# comum para ganhar cupom todo dia e repassar pra fora da pista.
+
+@app.route('/api/admin/frentistas', methods=['POST'])
+@exige_master
+def admin_criar_frentista():
+    """
+    Cria a conta de cliente de um frentista, ou converte uma conta que já
+    existe (mesmo CPF) de 'comum' para 'frentista'. Só o Master mexe aqui.
+    """
+    try:
+        data = request.get_json() or {}
+
+        cpf = re.sub(r'\D', '', str(data.get('cpf') or ''))
+        if not validar_cpf(cpf):
+            return jsonify({'erro': 'CPF inválido'}), 400
+
+        nome = (data.get('nome') or '').strip()
+        if not nome:
+            return jsonify({'erro': 'Nome é obrigatório'}), 400
+
+        email = (data.get('email') or '').strip()
+        if not validar_email(email):
+            return jsonify({'erro': 'Email inválido'}), 400
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT id, tipo_cliente, nome FROM clientes WHERE cpf = ?', (cpf,))
+        existente = cursor.fetchone()
+
+        agora_iso = agora().isoformat()
+
+        if existente:
+            # CPF já cadastrado: é conversão de uma conta existente, não um
+            # cadastro novo — a trava de CPF único impede criar uma segunda
+            # linha, e é justamente essa trava que fecha a fraude.
+            if (existente['tipo_cliente'] or 'comum') == 'frentista':
+                conn.close()
+                return jsonify({
+                    'erro': f'{existente["nome"]} já está cadastrado como frentista.'
+                }), 400
+
+            cursor.execute('''
+                UPDATE clientes
+                SET tipo_cliente = 'frentista',
+                    tipo_cliente_definido_por = ?, tipo_cliente_definido_em = ?
+                WHERE id = ?
+            ''', (request.admin['usuario'], agora_iso, existente['id']))
+            cliente_id = existente['id']
+            criado_agora = False
+        else:
+            placa = normalizar_placa(data.get('placa'))
+            erro_placa = validar_placa(placa) if placa else None
+            if erro_placa:
+                return jsonify({'erro': erro_placa}), 400
+
+            senha = data.get('senha') or ''
+            if len(senha) < 6:
+                conn.close()
+                return jsonify({'erro': 'Senha precisa de pelo menos 6 caracteres'}), 400
+
+            cursor.execute('SELECT id FROM clientes WHERE LOWER(email) = LOWER(?)', (email,))
+            if cursor.fetchone():
+                conn.close()
+                return jsonify({'erro': 'Email já cadastrado'}), 400
+
+            senha_hash = generate_password_hash(senha)
+
+            cursor.execute('''
+                INSERT INTO clientes
+                (cpf, nome, ocupacao, tel, endereco, email, senha_hash, desconto_tipo,
+                 desconto_valor, aceita_promocoes, data_consentimento, placa, data_placa,
+                 registro_tipo, status, tipo_cliente, tipo_cliente_definido_por,
+                 tipo_cliente_definido_em)
+                VALUES (?, ?, 'Frentista', ?, ?, ?, ?, 'fixo', 1.00, 1, ?, ?, ?, 'frentista',
+                        'ativo', 'frentista', ?, ?)
+            ''', (cpf, nome, data.get('tel'), data.get('endereco') or 'Equipe CAJ SKY',
+                  email, senha_hash, agora_iso, placa, agora_iso,
+                  request.admin['usuario'], agora_iso))
+            cliente_id = cursor.lastrowid
+
+            meu_codigo_indicacao = f'CJ{cliente_id}'
+            cursor.execute('UPDATE clientes SET codigo_indicacao = ? WHERE id = ?',
+                           (meu_codigo_indicacao, cliente_id))
+            criado_agora = True
+
+        registrar_auditoria(
+            cursor, request.admin,
+            'frentista_cadastrado' if criado_agora else 'frentista_convertido',
+            detalhe=f'{nome} (CPF ***{cpf[-4:]}) — 1 combustível a cada 7 dias, sem óleo'
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({
+            'cliente_id': cliente_id,
+            'criado': criado_agora,
+            'mensagem': ('Conta de frentista criada.' if criado_agora
+                         else 'Conta convertida para frentista.')
+        }), 201 if criado_agora else 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/frentistas/<int:cliente_id>/reverter', methods=['POST'])
+@exige_master
+def admin_reverter_frentista(cliente_id):
+    """Devolve a conta ao regime de cliente comum (1 combustível por dia, óleo liberado)."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, nome, tipo_cliente FROM clientes WHERE id = ?', (cliente_id,))
+        cliente = cursor.fetchone()
+        if not cliente:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+        if (cliente['tipo_cliente'] or 'comum') != 'frentista':
+            conn.close()
+            return jsonify({'erro': 'Esta conta não está marcada como frentista.'}), 400
+
+        cursor.execute('''
+            UPDATE clientes
+            SET tipo_cliente = 'comum',
+                tipo_cliente_definido_por = ?, tipo_cliente_definido_em = ?
+            WHERE id = ?
+        ''', (request.admin['usuario'], agora().isoformat(), cliente_id))
+
+        registrar_auditoria(cursor, request.admin, 'frentista_revertido_para_comum',
+                            detalhe=cliente['nome'])
+
+        conn.commit()
+        conn.close()
+        return jsonify({'mensagem': f'{cliente["nome"]} voltou a ser cliente comum.'}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/frentistas', methods=['GET'])
+@exige_gerencia
+def admin_listar_frentistas():
+    """Lista os frentistas cadastrados e se já usaram o cupom da semana."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        desde = (agora() - timedelta(days=INTERVALO_FRENTISTA_COMBUSTIVEL_DIAS - 1)) \
+            .strftime('%Y-%m-%d')
+
+        cursor.execute('''
+            SELECT id, nome, cpf, placa, tel, email, status,
+                   tipo_cliente_definido_por, tipo_cliente_definido_em
+            FROM clientes
+            WHERE tipo_cliente = 'frentista'
+            ORDER BY nome ASC
+        ''')
+        frentistas = []
+        for row in cursor.fetchall():
+            f = dict(row)
+            f['cpf'] = f'***{f["cpf"][-4:]}' if f.get('cpf') else ''
+            cursor.execute('''
+                SELECT c.data_geracao, c.status
+                FROM cupons c
+                WHERE c.cliente_id = ?
+                  AND COALESCE(c.categoria, 'combustivel') = 'combustivel'
+                  AND c.data_geracao >= ?
+                  AND COALESCE(c.status, '') <> 'cancelado'
+                ORDER BY c.id DESC LIMIT 1
+            ''', (f['id'], desde))
+            usado = cursor.fetchone()
+            if usado:
+                proxima = (datetime.strptime(usado['data_geracao'], '%Y-%m-%d')
+                           + timedelta(days=INTERVALO_FRENTISTA_COMBUSTIVEL_DIAS)).strftime('%d/%m/%Y')
+                f['cupom_semana'] = 'usado' if usado['status'] in ('parcial', 'completo') else 'gerado'
+                f['proximo_cupom_em'] = proxima
+            else:
+                f['cupom_semana'] = 'disponivel'
+                f['proximo_cupom_em'] = None
+            frentistas.append(f)
+
+        conn.close()
+        return jsonify({'frentistas': frentistas}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 

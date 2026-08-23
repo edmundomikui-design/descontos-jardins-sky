@@ -39,7 +39,8 @@ def checar(condicao, descricao, extra=''):
 
 # CPFs válidos (dígitos verificadores corretos) para o teste
 CPFS = ['11144477735', '52998224725', '87748248800', '15350946056',
-        '19100000000', '76887453043', '39053344705', '48151623733']
+        '19100000000', '76887453043', '39053344705', '48151623733',
+        '12345678909']
 FOTO = 'data:image/jpeg;base64,' + ('A' * 3000)
 
 
@@ -229,6 +230,35 @@ d, _ = cadastrar('Espertinho', 4, '11911110000', ref=codigo)   # telefone do ind
 checar(d.get('veio_de_indicacao') is False,
        'cadastro com o telefone do indicador NÃO vira indicação', d)
 checar(d.get('cliente_id') is not None, 'mas o cadastro em si é aceito normalmente', d)
+
+print('\n=== 10b. Cliente já cadastrado NUNCA pode virar indicado depois ===')
+# Fraude descrita pelo Edmundo em 23/08: pegar um cliente que já é cliente
+# (cadastrado sem indicação de ninguém) e tentar "indicá-lo" depois, para
+# faturar o prêmio às custas de alguém que já viria de qualquer jeito.
+sem_ref, _ = cadastrar('ClienteAntigo', 8, '11988880000', ref=None)
+checar(sem_ref.get('veio_de_indicacao') is False,
+       'cliente antigo se cadastra sem indicação de ninguém', sem_ref)
+cliente_antigo_id = sem_ref.get('cliente_id')
+
+# Tentativa de fraude: "recadastrar" o MESMO CPF agora com um código de
+# indicação, tentando atribuir um indicador depois do fato consumado.
+tentativa_fraude, status_fraude = cadastrar('ClienteAntigo', 8, '11988880000', ref=codigo)
+checar(status_fraude == 400, 'recadastro com CPF já existente é RECUSADO', tentativa_fraude)
+checar(tentativa_fraude.get('erro') == 'CPF já cadastrado',
+       'motivo da recusa é o CPF duplicado', tentativa_fraude)
+
+_c = get_db()
+_cur = _c.cursor()
+_cur.execute('SELECT indicado_por_id FROM clientes WHERE id = ?', (cliente_antigo_id,))
+_depois_fraude = dict(_cur.fetchone())
+_c.close()
+checar(_depois_fraude['indicado_por_id'] is None,
+       'indicado_por_id do cliente antigo continua NULO — a tentativa não colou',
+       _depois_fraude)
+# Não existe, em lugar nenhum do sistema, uma rota que edite indicado_por_id
+# depois do cadastro — é campo escrito uma vez só, no INSERT, e nunca mais
+# tocado. É isso que torna a trava estrutural, e não um acidente de
+# "ninguém pensou em burlar ainda" (ver dor nº 2 do projeto).
 
 print('\n=== 11. Master muda o valor do prêmio ===')
 r = cli.post('/api/admin/indicacoes/config',
