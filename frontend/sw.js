@@ -36,7 +36,9 @@
 // que foi publicado.
 // v21: programa de indicação ("Indique e Ganhe") — link pessoal no painel do
 // cliente, faixa "fulano te indicou" no cadastro e aba nova no admin.
-const CACHE = 'cajsky-v21';
+// v22: campanha de frentistas — aba nova no admin (só Master), "clientes"
+// virou "parceiros" nas mensagens do programa de indicação.
+const CACHE = 'cajsky-v22';
 
 const ESSENCIAIS = [
     '/',
