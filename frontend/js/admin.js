@@ -261,6 +261,7 @@ function trocarAba(nome) {
     if (nome === 'caixa') carregarCaixa();
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
+    if (nome === 'indicacoes') carregarIndicacoesAdmin();
     if (nome === 'liberacoes') carregarLiberacoes();
     if (nome === 'cupons') abrirCuponsDoDia();
     else pararAutoCupons();   // não fica batendo na API numa aba que ninguém vê
@@ -970,6 +971,171 @@ async function alternarConvenio(empresaId, ativo, nome) {
         carregarEmpresas();
     } catch (e) {
         aviso(e.message, 'erro');
+    }
+}
+
+// ===================== PROGRAMA DE INDICAÇÃO =====================
+
+// AAAA-MM-DD -> DD/MM/AAAA, sem passar por `new Date()`: uma data solta
+// interpretada como Date vira meia-noite em UTC e volta um dia atrás aqui
+// no Brasil. É a mesma armadilha do toISOString() que corrigimos em 23/08,
+// só que na direção contrária.
+function dataBR(iso) {
+    const partes = String(iso || '').slice(0, 10).split('-');
+    return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : String(iso || '');
+}
+
+async function carregarIndicacoesAdmin() {
+    await Promise.all([carregarConfigIndicacoes(), carregarRankingIndicacoes()]);
+}
+
+async function carregarConfigIndicacoes() {
+    try {
+        const d = await api('/admin/indicacoes/config');
+        document.getElementById('indicacoes-meta').value = d.meta_indicacoes;
+        document.getElementById('indicacoes-valor').value = d.valor_recompensa.toFixed(2);
+        document.getElementById('indicacoes-min-combustivel').value = d.minimo_litros_combustivel;
+        document.getElementById('indicacoes-min-oleo').value = d.minimo_litros_oleo;
+        document.getElementById('indicacoes-fim-campanha').value = d.data_fim_campanha || '';
+        document.getElementById('indicacoes-validade-premio').value = d.validade_premio_dias;
+        document.getElementById('indicacoes-validade-indicacao').value = d.validade_indicacao_dias;
+        document.getElementById('indicacoes-ativo').checked = d.ativo;
+
+        // Campanha vencida não avisa sozinha em lugar nenhum — se a data
+        // passou e ninguém percebeu, o programa está parado em silêncio.
+        const alvoAviso = document.getElementById('indicacoes-config-aviso');
+        if (alvoAviso) {
+            alvoAviso.innerHTML = d.campanha_encerrada
+                ? `<div class="aviso-trava">⏳ <strong>A campanha está encerrada</strong> —
+                   a data de ${escapar(d.data_fim_campanha)} já passou e nenhum prêmio novo
+                   está sendo gerado. Para reabrir, mude a data ou apague o campo.</div>`
+                : '';
+        }
+    } catch (e) {
+        document.getElementById('indicacoes-config-msg').innerHTML =
+            `<p class="vazio">Não consegui carregar a configuração: ${escapar(e.message)}</p>`;
+    }
+}
+
+async function salvarConfigIndicacoes() {
+    const meta = Number(document.getElementById('indicacoes-meta').value);
+    const valor = Number(document.getElementById('indicacoes-valor').value);
+    const minCombustivel = Number(document.getElementById('indicacoes-min-combustivel').value);
+    const minOleo = Number(document.getElementById('indicacoes-min-oleo').value);
+    const fimCampanha = document.getElementById('indicacoes-fim-campanha').value;
+    const validadePremio = Number(document.getElementById('indicacoes-validade-premio').value);
+    const validadeIndicacao = Number(document.getElementById('indicacoes-validade-indicacao').value);
+    const ativo = document.getElementById('indicacoes-ativo').checked;
+    const msg = document.getElementById('indicacoes-config-msg');
+
+    if (!meta || meta < 1) return aviso('A meta de indicações precisa ser pelo menos 1.', 'erro');
+    if (valor < 0 || Number.isNaN(valor)) return aviso('Informe o valor do prêmio.', 'erro');
+    if (minCombustivel < 0 || Number.isNaN(minCombustivel)) {
+        return aviso('Informe o mínimo de litros de combustível.', 'erro');
+    }
+    if (minOleo < 0 || Number.isNaN(minOleo)) {
+        return aviso('Informe o mínimo de litros de óleo.', 'erro');
+    }
+    if (validadePremio < 0 || Number.isNaN(validadePremio)) {
+        return aviso('Informe em quantos dias o prêmio vence (0 = sem prazo).', 'erro');
+    }
+    if (validadeIndicacao < 0 || Number.isNaN(validadeIndicacao)) {
+        return aviso('Informe por quantos dias a indicação vale (0 = sem prazo).', 'erro');
+    }
+
+    // Data de fim no passado é quase sempre engano de digitação — e o efeito
+    // é o programa parar de gerar prêmios em silêncio.
+    if (fimCampanha && fimCampanha < dataLocalISO()) {
+        if (!confirm(`A data ${fimCampanha} já passou.\n\n` +
+                     `Salvando assim, a campanha fica ENCERRADA e nenhum prêmio novo ` +
+                     `será gerado. Prêmios já ganhos continuam valendo.\n\nConfirma?`)) {
+            return;
+        }
+    }
+
+    try {
+        const d = await api('/admin/indicacoes/config', {
+            method: 'POST',
+            body: JSON.stringify({
+                meta_indicacoes: meta,
+                valor_recompensa: valor,
+                minimo_litros_combustivel: minCombustivel,
+                minimo_litros_oleo: minOleo,
+                data_fim_campanha: fimCampanha || null,
+                validade_premio_dias: validadePremio,
+                validade_indicacao_dias: validadeIndicacao,
+                ativo
+            })
+        });
+        aviso(d.mensagem);
+        msg.innerHTML = '';
+        carregarConfigIndicacoes();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function carregarRankingIndicacoes() {
+    const alvoRanking = document.getElementById('indicacoes-ranking');
+    const alvoPremios = document.getElementById('indicacoes-premios');
+    try {
+        const d = await api('/admin/indicacoes');
+
+        if (!d.ranking || !d.ranking.length) {
+            alvoRanking.innerHTML = '<p class="vazio">Ninguém indicou ninguém ainda.</p>';
+        } else {
+            alvoRanking.innerHTML = `
+                <table class="tabela">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th><th>Código</th>
+                            <th>Indicações que viraram cliente</th><th>Total de cadastros indicados</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.ranking.map(r => `
+                            <tr>
+                                <td>${escapar(r.indicador_nome)}</td>
+                                <td>${escapar(r.codigo_indicacao || '—')}</td>
+                                <td>${r.total_positivas}</td>
+                                <td>${r.total_indicados}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        const rotuloStatus = {
+            disponivel: 'Disponível',
+            aplicado: 'Aplicado a um cupom',
+            expirado: '⏳ Venceu sem uso'
+        };
+        if (!d.premios || !d.premios.length) {
+            alvoPremios.innerHTML = '<p class="vazio">Nenhum prêmio concedido ainda.</p>';
+        } else {
+            alvoPremios.innerHTML = `
+                <table class="tabela">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th><th>Valor</th><th>Ao completar</th>
+                            <th>Status</th><th>Concedido em</th><th>Vale até</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.premios.map(p => `
+                            <tr style="${p.status === 'expirado' ? 'opacity:.55;' : ''}">
+                                <td>${escapar(p.cliente_nome)}</td>
+                                <td>R$ ${Number(p.valor).toFixed(2)}</td>
+                                <td>${p.indicacoes_completas} indicações</td>
+                                <td>${rotuloStatus[p.status] || escapar(p.status)}</td>
+                                <td>${escapar((p.data_concessao || '').slice(0, 16).replace('T', ' '))}</td>
+                                <td>${p.validade ? escapar(dataBR(p.validade)) : 'sem prazo'}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+    } catch (e) {
+        alvoRanking.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+        alvoPremios.innerHTML = '';
     }
 }
 

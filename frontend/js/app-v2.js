@@ -26,6 +26,41 @@ function setTxt(id, valor) {
     else console.warn('Elemento não encontrado:', id);
 }
 
+// ===== PROGRAMA DE INDICAÇÃO — "traga um amigo, ganhe um cupom" =====
+//
+// Quem chega pelo link de um cliente (ex.: cajsky.com.br/?ref=CJ123) carrega
+// o código na URL. Guardamos em localStorage porque a pessoa pode abrir o
+// link, olhar o app, fechar e só voltar para se cadastrar depois — sem isso,
+// a indicação se perderia.
+function capturarCodigoIndicacao() {
+    const params = new URLSearchParams(window.location.search);
+    const codigoNaUrl = (params.get('ref') || '').trim();
+    if (codigoNaUrl) {
+        localStorage.setItem('cajsky_ref_codigo', codigoNaUrl.toUpperCase());
+    }
+
+    const codigoSalvo = obterCodigoIndicacaoSalvo();
+    if (!codigoSalvo) return;
+
+    // Mostra "Fulano te indicou!" quando dá para confirmar o nome — é só um
+    // toque de confiança, o cadastro funciona igual se essa checagem falhar.
+    fetch(`${API_BASE_URL}/indicacao/verificar?codigo=${encodeURIComponent(codigoSalvo)}`)
+        .then(r => r.json())
+        .then(d => {
+            if (!d.valido) return;
+            const faixa = document.getElementById('faixa-indicacao');
+            if (faixa) {
+                faixa.textContent = `🎉 ${d.nome} te indicou! Cadastre-se e comece a economizar.`;
+                faixa.hidden = false;
+            }
+        })
+        .catch(() => {});
+}
+
+function obterCodigoIndicacaoSalvo() {
+    return localStorage.getItem('cajsky_ref_codigo') || null;
+}
+
 // ===== INICIALIZAÇÃO =====
 document.addEventListener('DOMContentLoaded', () => {
     // O service worker agora é registrado por js/instalar.js, a partir da raiz
@@ -40,9 +75,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (mostrarAvisoDeSituacao()) {
             carregarProdutos().then(carregarCuponsAtivos);
         }
+        carregarIndicacao();
     } else {
         setupLoginForm();
         setupEsqueciForm();
+        capturarCodigoIndicacao();
     }
 
     const agora = new Date().toLocaleDateString('pt-BR');
@@ -262,7 +299,8 @@ function setupLoginForm() {
                 // A empresa agora é escolhida numa lista fechada: o campo
                 // guarda o id do convênio, não o nome digitado.
                 empresa_convenio_id: document.getElementById('cadastro-empresa').value || null,
-                foto_comprovante: comprovanteEmBase64
+                foto_comprovante: comprovanteEmBase64,
+                indicado_por_codigo: obterCodigoIndicacaoSalvo()
             };
 
             if (dados.ocupacao === 'Outro' && !dados.empresa_convenio_id) {
@@ -295,6 +333,7 @@ async function fazerLogin(email, senha) {
             localStorage.setItem('cliente_status', data.status || 'ativo');
             localStorage.setItem('cliente_empresa', data.empresa_convenio || '');
             localStorage.setItem('cliente_motivo_recusa', data.motivo_recusa || '');
+            localStorage.setItem('cliente_codigo_indicacao', data.codigo_indicacao || '');
             window.location.href = 'dashboard.html';
         } else {
             mostrarErro('login', data.erro || 'Erro ao fazer login');
@@ -349,6 +388,9 @@ async function fazerCadastro(dados) {
             document.getElementById('cadastro-form').reset();
             limparComprovante();
             document.getElementById('bloco-veiculo').style.display = 'none';
+            // Já usado neste cadastro — some, para não grudar num próximo
+            // cadastro de outra pessoa no mesmo aparelho.
+            localStorage.removeItem('cajsky_ref_codigo');
             setTimeout(() => {
                 toggleTab();
             }, data.aguardando_aprovacao ? 4000 : 1500);
@@ -1184,3 +1226,127 @@ window.onclick = function (event) {
         modal.style.display = 'none';
     }
 };
+
+// ===== PROGRAMA DE INDICAÇÃO — cartão "Indique e Ganhe" no painel do cliente =====
+
+function linkDeIndicacao(codigo) {
+    return `${window.location.origin}/?ref=${encodeURIComponent(codigo)}`;
+}
+
+// AAAA-MM-DD -> DD/MM/AAAA, sem passar por `new Date()`: uma data solta
+// interpretada como Date vira meia-noite em UTC e volta um dia atrás aqui no
+// Brasil — a mesma armadilha do toISOString(), na direção contrária.
+function dataBR(iso) {
+    const partes = String(iso || '').slice(0, 10).split('-');
+    return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : String(iso || '');
+}
+
+async function carregarIndicacao() {
+    const cartao = document.getElementById('indicacao-card');
+    if (!cartao) return;
+
+    const clienteId = (clienteAtual && clienteAtual.id) || localStorage.getItem('cliente_id');
+    if (!clienteId) return;
+
+    try {
+        const resposta = await fetch(`${API_BASE_URL}/cliente/${clienteId}/indicacao`);
+        const d = await resposta.json();
+        if (!resposta.ok) throw new Error(d.erro || 'Não consegui carregar');
+
+        if (!d.programa_ativo) {
+            cartao.hidden = true;
+            return;
+        }
+        cartao.hidden = false;
+
+        localStorage.setItem('cliente_codigo_indicacao', d.codigo_indicacao);
+        const link = linkDeIndicacao(d.codigo_indicacao);
+
+        setTxt('indicacao-link', link);
+
+        const faltam = d.faltam_para_o_proximo_premio;
+        setTxt('indicacao-progresso',
+            faltam > 0
+                ? `Faltam ${faltam} indicação${faltam > 1 ? 'ões' : ''} que virem cliente ` +
+                  `para você ganhar um cupom de R$ ${d.valor_recompensa.toFixed(2)}.`
+                : `Complete sua próxima indicação para ganhar um cupom de R$ ${d.valor_recompensa.toFixed(2)}.`);
+
+        const aguardando = d.total_cadastros_indicados - d.total_indicacoes_positivas;
+        setTxt('indicacao-total',
+            `Você já trouxe ${d.total_indicacoes_positivas} cliente` +
+            `${d.total_indicacoes_positivas === 1 ? '' : 's'} de verdade` +
+            (aguardando > 0
+                ? ` (${aguardando} ainda não fez um abastecimento que conta)`
+                : '') + '.');
+
+        // A regra dos litros precisa estar na tela: sem isso, quem indicou um
+        // amigo que abasteceu 5 L acha que o app está com defeito.
+        setTxt('indicacao-regra',
+            `Vale quando o indicado abastece ${d.minimo_litros_combustivel} L ou mais de ` +
+            `combustível (ou ${d.minimo_litros_oleo} L de óleo) usando o cupom dele. ` +
+            `Abasteceu menos? A indicação continua valendo e conta no próximo abastecimento.`);
+
+        const avisoPremio = document.getElementById('indicacao-premio-pronto');
+        if (avisoPremio) {
+            if (d.premios_disponiveis > 0) {
+                avisoPremio.hidden = false;
+                avisoPremio.textContent = `🎁 Você tem R$ ${d.valor_premios_disponiveis.toFixed(2)} em ` +
+                    `prêmio pronto! Ele entra sozinho no seu próximo cupom, num abastecimento ` +
+                    `de ${d.minimo_litros_combustivel} L ou mais. Se abastecer menos, o prêmio ` +
+                    `fica guardado para a próxima.` +
+                    (d.premio_vence_em ? ` ⏳ Use até ${dataBR(d.premio_vence_em)}.` : '');
+            } else {
+                avisoPremio.hidden = true;
+            }
+        }
+
+        const avisoFim = document.getElementById('indicacao-prazo');
+        if (avisoFim) {
+            if (d.data_fim_campanha) {
+                avisoFim.hidden = false;
+                avisoFim.textContent = d.campanha_encerrada
+                    ? `Esta campanha terminou em ${dataBR(d.data_fim_campanha)}.`
+                    : `⏳ Campanha válida até ${dataBR(d.data_fim_campanha)} — aproveite!`;
+            } else {
+                avisoFim.hidden = true;
+            }
+        }
+    } catch (erro) {
+        console.warn('Indicação:', erro);
+        cartao.hidden = true;
+    }
+}
+
+function copiarLinkIndicacao() {
+    const codigo = localStorage.getItem('cliente_codigo_indicacao');
+    if (!codigo) return;
+    const link = linkDeIndicacao(codigo);
+
+    const feedback = document.getElementById('indicacao-copiado');
+    const mostrarFeedback = () => {
+        if (!feedback) return;
+        feedback.hidden = false;
+        setTimeout(() => { feedback.hidden = true; }, 2500);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(mostrarFeedback).catch(() => {
+            prompt('Copie o link abaixo:', link);
+        });
+    } else {
+        prompt('Copie o link abaixo:', link);
+    }
+}
+
+function compartilharIndicacao() {
+    const codigo = localStorage.getItem('cliente_codigo_indicacao');
+    if (!codigo) return;
+    const link = linkDeIndicacao(codigo);
+    const texto = `Estou economizando nos postos CAJ SKY! Cadastre-se pelo meu link e você também economiza: ${link}`;
+
+    if (navigator.share) {
+        navigator.share({ text: texto }).catch(() => {});
+    } else {
+        window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
+    }
+}
