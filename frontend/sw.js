@@ -8,6 +8,15 @@
 // costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
 // tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
 
+// v20: a fivela saiu de vez (ficou só a tira do cinto) e o "DESCONTOS" virou
+// uma etiqueta laçada na mangueira, desenhada dentro da própria imagem. O
+// nome e o selo subiram para o topo da faixa.
+//
+// v19: o monograma saiu da fivela do cinto. O guia de marca proíbe
+// "adicionar boxes ou formas ao redor do logotipo, em especial sobre
+// amarelo" — e uma fivela amarela com o símbolo dentro é exatamente isso.
+// A marca continua no boné e no peito, que o guia prevê para uniformes.
+//
 // v18: o monograma OFICIAL da Ipiranga entrou no uniforme do Cajinho, no
 // lugar da imitação que a IA tinha desenhado. Base: guia simplificado de
 // marca (mar/2023), seção "uso restrito | desverbalizado", que prevê o
@@ -25,7 +34,7 @@
 // Trocar este número faz parte de publicar: sem isso, quem já tem o app
 // instalado continua abrindo as telas guardadas em cache e não vê nada do
 // que foi publicado.
-const CACHE = 'cajsky-v18';
+const CACHE = 'cajsky-v20';
 
 const ESSENCIAIS = [
     '/',
