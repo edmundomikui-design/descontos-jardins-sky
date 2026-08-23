@@ -227,7 +227,7 @@ function validarComprovacao(dados) {
     if (!comprovanteEmBase64) {
         return 'Envie ' + perfil.rotuloFoto.toLowerCase().replace(/:$/, '') + '.';
     }
-    if (perfil.pedeConvenio && !(dados.empresa_convenio || '').trim()) {
+    if (perfil.pedeConvenio && !dados.empresa_convenio_id) {
         return 'Informe a empresa do convênio.';
     }
     return null;
