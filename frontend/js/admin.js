@@ -262,6 +262,7 @@ function trocarAba(nome) {
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
     if (nome === 'indicacoes') carregarIndicacoesAdmin();
+    if (nome === 'frentistas') carregarFrentistasAdmin();
     if (nome === 'liberacoes') carregarLiberacoes();
     if (nome === 'cupons') abrirCuponsDoDia();
     else pararAutoCupons();   // não fica batendo na API numa aba que ninguém vê
@@ -1136,6 +1137,101 @@ async function carregarRankingIndicacoes() {
     } catch (e) {
         alvoRanking.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
         alvoPremios.innerHTML = '';
+    }
+}
+
+// ===================== CAMPANHA DE FRENTISTAS (só Master) =====================
+//
+// Frentista é cliente diferenciado: 1 combustível a cada 7 dias corridos,
+// zero óleo. Conta só nasce ou converte por aqui — nunca pelo cadastro
+// público do motorista.
+
+async function cadastrarFrentista() {
+    const nome = document.getElementById('frentista-nome').value.trim();
+    const cpf = document.getElementById('frentista-cpf').value.replace(/\D/g, '');
+    const tel = document.getElementById('frentista-tel').value.trim();
+    const placa = document.getElementById('frentista-placa').value.trim();
+    const email = document.getElementById('frentista-email').value.trim();
+    const senha = document.getElementById('frentista-senha').value;
+    const msg = document.getElementById('frentista-cadastro-msg');
+
+    if (!nome) return aviso('Informe o nome.', 'erro');
+    if (cpf.length !== 11) return aviso('CPF precisa ter 11 dígitos.', 'erro');
+    if (!email.includes('@')) return aviso('Informe um e-mail válido.', 'erro');
+    if (senha.length < 6) return aviso('Senha precisa de pelo menos 6 caracteres.', 'erro');
+
+    try {
+        const d = await api('/admin/frentistas', {
+            method: 'POST',
+            body: JSON.stringify({ nome, cpf, tel, placa, email, senha })
+        });
+        aviso(d.mensagem);
+        msg.innerHTML = '';
+        document.getElementById('frentista-nome').value = '';
+        document.getElementById('frentista-cpf').value = '';
+        document.getElementById('frentista-tel').value = '';
+        document.getElementById('frentista-placa').value = '';
+        document.getElementById('frentista-email').value = '';
+        document.getElementById('frentista-senha').value = '';
+        carregarFrentistasAdmin();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function reverterFrentista(id, nome) {
+    if (!confirm(`Devolver ${nome} ao regime de cliente comum?\n\n` +
+                 `Ele passa a ter 1 combustível POR DIA (em vez de por semana) e volta ` +
+                 `a poder gerar cupom de óleo normalmente.`)) {
+        return;
+    }
+    try {
+        const d = await api(`/admin/frentistas/${id}/reverter`, { method: 'POST' });
+        aviso(d.mensagem);
+        carregarFrentistasAdmin();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function carregarFrentistasAdmin() {
+    const alvo = document.getElementById('frentistas-lista');
+    try {
+        const d = await api('/admin/frentistas');
+        if (!d.frentistas || !d.frentistas.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum frentista cadastrado ainda.</p>';
+            return;
+        }
+        const rotuloCupom = {
+            disponivel: '✅ Disponível esta semana',
+            gerado: '⏳ Já gerado esta semana',
+            usado: '🚫 Já usado esta semana'
+        };
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Nome</th><th>CPF</th><th>Placa</th>
+                        <th>Cupom da semana</th><th>Próximo em</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.frentistas.map(f => `
+                        <tr>
+                            <td>${escapar(f.nome)}</td>
+                            <td>${escapar(f.cpf)}</td>
+                            <td>${escapar(f.placa || '—')}</td>
+                            <td>${rotuloCupom[f.cupom_semana] || escapar(f.cupom_semana)}</td>
+                            <td>${f.proximo_cupom_em ? escapar(f.proximo_cupom_em) : '—'}</td>
+                            <td><button class="btn btn-secundario"
+                                onclick="reverterFrentista(${f.id}, '${escapar(f.nome)}')">
+                                Reverter para comum
+                            </button></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
 }
 

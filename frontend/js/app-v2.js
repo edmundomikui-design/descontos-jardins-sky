@@ -1267,13 +1267,13 @@ async function carregarIndicacao() {
         const faltam = d.faltam_para_o_proximo_premio;
         setTxt('indicacao-progresso',
             faltam > 0
-                ? `Faltam ${faltam} indicação${faltam > 1 ? 'ões' : ''} que virem cliente ` +
+                ? `Faltam ${faltam} indicação${faltam > 1 ? 'ões' : ''} que virem parceiro ` +
                   `para você ganhar um cupom de R$ ${d.valor_recompensa.toFixed(2)}.`
                 : `Complete sua próxima indicação para ganhar um cupom de R$ ${d.valor_recompensa.toFixed(2)}.`);
 
         const aguardando = d.total_cadastros_indicados - d.total_indicacoes_positivas;
         setTxt('indicacao-total',
-            `Você já trouxe ${d.total_indicacoes_positivas} cliente` +
+            `Você já trouxe ${d.total_indicacoes_positivas} parceiro` +
             `${d.total_indicacoes_positivas === 1 ? '' : 's'} de verdade` +
             (aguardando > 0
                 ? ` (${aguardando} ainda não fez um abastecimento que conta)`
