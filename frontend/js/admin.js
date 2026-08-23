@@ -5,6 +5,21 @@ const API = 'https://descontos-jardins-sky-1.onrender.com/api';
 let sessao = null;      // { token, usuario, nome, nivel }
 let produtosAdmin = [];
 
+// "Hoje" no fuso de Brasília, no formato AAAA-MM-DD (para os campos <input type="date">).
+//
+// NUNCA usar `new Date().toISOString().slice(0, 10)` para isso: toISOString()
+// converte para UTC antes de cortar a data. Como Brasília é UTC-3, isso troca
+// o dia sozinho todo entre 21h e meia-noite — pouco antes da virada real do
+// dia, o campo já mostra "amanhã". Foi o que causou o cupom de teste do
+// convênio (gerado corretamente às 22h29 de 22/08, pelo servidor) sumir da
+// tela: o filtro de data já tinha pulado para 23/08 sozinho.
+function dataLocalISO(d = new Date()) {
+    const ano = d.getFullYear();
+    const mes = String(d.getMonth() + 1).padStart(2, '0');
+    const dia = String(d.getDate()).padStart(2, '0');
+    return `${ano}-${mes}-${dia}`;
+}
+
 // ===================== INICIALIZAÇÃO =====================
 document.addEventListener('DOMContentLoaded', async () => {
     const salvo = localStorage.getItem('admin_sessao');
@@ -193,7 +208,7 @@ function abrirPainel() {
         el.style.display = podeAlterar ? '' : 'none';
     });
 
-    document.getElementById('caixa-data').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('caixa-data').value = dataLocalISO();
     carregarCaixa();
 }
 
@@ -468,7 +483,7 @@ let cupomAberto = null;
 function abrirCuponsDoDia() {
     const campoData = document.getElementById('cupons-data');
     if (campoData && !campoData.value) {
-        campoData.value = new Date().toISOString().slice(0, 10);
+        campoData.value = dataLocalISO();
     }
     carregarCuponsDoDia();
     alternarAutoCupons();
@@ -497,7 +512,7 @@ function alternarAutoCupons() {
 
 async function carregarCuponsDoDia(silencioso = false) {
     const dia = document.getElementById('cupons-data').value ||
-                new Date().toISOString().slice(0, 10);
+                dataLocalISO();
     const alvo = document.getElementById('cupons-conteudo');
 
     try {

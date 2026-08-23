@@ -5,6 +5,20 @@ let produtosDisponiveis = [];
 let cuponsGerados = {}; // { produto_id: cupom_data }
 let produtoSelecionado = null;
 
+// "Hoje" no fuso de Brasília, no formato AAAA-MM-DD.
+//
+// NUNCA usar `new Date().toISOString().slice(0, 10)` para isso: toISOString()
+// converte para UTC antes de cortar a data, e Brasília é UTC-3 — então entre
+// 21h e meia-noite o resultado já mostra o dia seguinte. No cache offline do
+// cupom (usarCacheLocal/salvarCacheLocal) isso apagava o cupom guardado no
+// celular bem quando o motorista mais precisava dele: sem internet, à noite.
+function dataLocalISO(d = new Date()) {
+    const ano = d.getFullYear();
+    const mes = String(d.getMonth() + 1).padStart(2, '0');
+    const dia = String(d.getDate()).padStart(2, '0');
+    return `${ano}-${mes}-${dia}`;
+}
+
 // Helper: escreve texto sem quebrar se o elemento não existir
 function setTxt(id, valor) {
     const el = document.getElementById(id);
@@ -535,7 +549,7 @@ async function carregarCuponsAtivos() {
 
 function salvarCacheLocal() {
     localStorage.setItem('cupons_do_dia', JSON.stringify({
-        data: new Date().toISOString().slice(0, 10),
+        data: dataLocalISO(),
         cupons: Object.values(cuponsGerados)
     }));
 }
@@ -547,7 +561,7 @@ function usarCacheLocal() {
         if (!bruto) return;
 
         const cache = JSON.parse(bruto);
-        const hoje = new Date().toISOString().slice(0, 10);
+        const hoje = dataLocalISO();
         if (cache.data !== hoje) {
             localStorage.removeItem('cupons_do_dia');
             return;
@@ -740,7 +754,7 @@ function montarImagemCupom() {
 function nomeArquivoCupom() {
     const nome = (textoDoElemento('cupom-produto-nome', 'cupom') || 'cupom')
         .replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = dataLocalISO();
     return `cupom-${nome}-${hoje}.png`;
 }
 
