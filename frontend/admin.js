@@ -1,0 +1,2164 @@
+// ===== PAINEL ADMINISTRATIVO - Jardins Sky =====
+
+const API = 'https://descontos-jardins-sky-1.onrender.com/api';
+
+let sessao = null;      // { token, usuario, nome, nivel }
+let produtosAdmin = [];
+
+// "Hoje" no fuso de Brasília, no formato AAAA-MM-DD (para os campos <input type="date">).
+//
+// NUNCA usar `new Date().toISOString().slice(0, 10)` para isso: toISOString()
+// converte para UTC antes de cortar a data. Como Brasília é UTC-3, isso troca
+// o dia sozinho todo entre 21h e meia-noite — pouco antes da virada real do
+// dia, o campo já mostra "amanhã". Foi o que causou o cupom de teste do
+// convênio (gerado corretamente às 22h29 de 22/08, pelo servidor) sumir da
+// tela: o filtro de data já tinha pulado para 23/08 sozinho.
+function dataLocalISO(d = new Date()) {
+    const ano = d.getFullYear();
+    const mes = String(d.getMonth() + 1).padStart(2, '0');
+    const dia = String(d.getDate()).padStart(2, '0');
+    return `${ano}-${mes}-${dia}`;
+}
+
+// ===================== INICIALIZAÇÃO =====================
+document.addEventListener('DOMContentLoaded', async () => {
+    const salvo = localStorage.getItem('admin_sessao');
+    if (salvo) {
+        try {
+            sessao = JSON.parse(salvo);
+            abrirPainel();
+            return;
+        } catch (e) {
+            localStorage.removeItem('admin_sessao');
+        }
+    }
+
+    // Verifica se já existe administrador (primeiro acesso)
+    try {
+        const r = await fetch(`${API}/admin/existe`);
+        const d = await r.json();
+        if (!d.existe) {
+            document.getElementById('aviso-primeiro-acesso').style.display = 'block';
+            document.getElementById('btn-entrar').textContent = 'Criar acesso Master';
+            document.getElementById('form-login').dataset.modo = 'setup';
+            document.getElementById('campo-email-setup').style.display = 'block';
+            document.getElementById('login-email-setup').required = true;
+        }
+    } catch (e) {
+        mostrarErroLogin('Não foi possível falar com o servidor. Ele pode estar iniciando — aguarde 1 minuto e recarregue.');
+    }
+});
+
+// ===================== AUTENTICAÇÃO =====================
+async function fazerLogin(evento) {
+    evento.preventDefault();
+
+    const usuario = document.getElementById('login-usuario').value.trim();
+    const senha = document.getElementById('login-senha').value;
+    const modo = document.getElementById('form-login').dataset.modo;
+    const botao = document.getElementById('btn-entrar');
+
+    botao.disabled = true;
+    botao.textContent = 'Aguarde...';
+
+    try {
+        if (modo === 'setup') {
+            const r = await fetch(`${API}/admin/setup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    usuario, senha,
+                    email: document.getElementById('login-email-setup').value.trim()
+                })
+            });
+            const d = await r.json();
+
+            if (!r.ok) throw new Error(d.erro || 'Erro ao criar administrador');
+
+            document.getElementById('form-login').dataset.modo = '';
+            document.getElementById('aviso-primeiro-acesso').style.display = 'none';
+            document.getElementById('campo-email-setup').style.display = 'none';
+            document.getElementById('login-email-setup').required = false;
+            mostrarErroLogin('✅ Acesso Master criado! Entre agora com esse usuário e senha.', true);
+            botao.disabled = false;
+            botao.textContent = 'Entrar';
+            return false;
+        }
+
+        const r = await fetch(`${API}/admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usuario, senha })
+        });
+        const d = await r.json();
+
+        if (!r.ok) throw new Error(d.erro || 'Erro ao entrar');
+
+        sessao = { token: d.token, usuario: d.usuario, nome: d.nome, nivel: d.nivel };
+        localStorage.setItem('admin_sessao', JSON.stringify(sessao));
+        abrirPainel();
+    } catch (erro) {
+        mostrarErroLogin(erro.message);
+    } finally {
+        botao.disabled = false;
+        if (document.getElementById('form-login').dataset.modo !== 'setup') {
+            botao.textContent = 'Entrar';
+        }
+    }
+
+    return false;
+}
+
+function mostrarErroLogin(mensagem, sucesso = false) {
+    const el = document.getElementById('login-erro');
+    el.textContent = mensagem;
+    el.className = sucesso ? 'msg-erro sucesso' : 'msg-erro';
+    el.style.display = 'block';
+}
+
+// ---------- Esqueci minha senha (equipe do painel) ----------
+//
+// Antes disto, quem esquecia a senha dependia de um Master estar disponível
+// para redefinir. Como havia um Master só, o Master esquecer a própria senha
+// significava perder o painel — sem saída nenhuma.
+
+function abrirEsqueciSenhaAdmin() {
+    document.getElementById('box-login').style.display = 'none';
+    document.getElementById('box-esqueci').style.display = 'block';
+
+    // Aproveita o usuário já digitado na tela de entrar.
+    const doLogin = document.getElementById('login-usuario').value.trim();
+    const campo = document.getElementById('esqueci-identificador');
+    if (doLogin) campo.value = doLogin;
+    campo.focus();
+    return false;
+}
+
+function voltarLoginAdmin() {
+    document.getElementById('box-esqueci').style.display = 'none';
+    document.getElementById('box-login').style.display = 'block';
+    const el = document.getElementById('esqueci-erro');
+    el.textContent = '';
+    el.style.display = 'none';
+    document.getElementById('form-esqueci-admin').style.display = 'block';
+    return false;
+}
+
+async function pedirLinkAdmin(evento) {
+    evento.preventDefault();
+
+    const identificador = document.getElementById('esqueci-identificador').value.trim();
+    const botao = document.getElementById('btn-esqueci-admin');
+    const msg = document.getElementById('esqueci-erro');
+
+    botao.disabled = true;
+    botao.textContent = 'Enviando...';
+    msg.style.display = 'none';
+
+    try {
+        const r = await fetch(`${API}/admin/esqueci-senha`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identificador })
+        });
+        const d = await r.json();
+
+        if (!r.ok) throw new Error(d.erro || 'Não foi possível enviar agora.');
+
+        msg.textContent = d.mensagem;
+        msg.className = 'msg-erro sucesso';
+        msg.style.display = 'block';
+        // Esconde o formulário: apertar de novo cairia na trava de 1 minuto
+        // do servidor e não mandaria nada, parecendo que falhou.
+        document.getElementById('form-esqueci-admin').style.display = 'none';
+    } catch (erro) {
+        msg.textContent = erro.message;
+        msg.className = 'msg-erro';
+        msg.style.display = 'block';
+    } finally {
+        botao.disabled = false;
+        botao.textContent = 'Enviar link';
+    }
+
+    return false;
+}
+
+function sair() {
+    localStorage.removeItem('admin_sessao');
+    location.reload();
+}
+
+function abrirPainel() {
+    document.getElementById('tela-login').style.display = 'none';
+    document.getElementById('painel').style.display = 'block';
+
+    const nivel = sessao.nivel;
+    const ehMaster = nivel === 'master';
+    const podeAlterar = nivel === 'master' || nivel === 'gerencia';
+
+    document.getElementById('badge-usuario').textContent =
+        `${sessao.nome || sessao.usuario} · ${rotuloNivel(nivel)}`;
+    document.getElementById('badge-usuario').className = `badge badge-${nivel}`;
+
+    // Caixa não altera nada; Gerência não mexe em usuários
+    document.querySelectorAll('.somente-master').forEach(el => {
+        el.style.display = ehMaster ? '' : 'none';
+    });
+    document.querySelectorAll('.somente-gerencia').forEach(el => {
+        el.style.display = podeAlterar ? '' : 'none';
+    });
+
+    document.getElementById('caixa-data').value = dataLocalISO();
+    carregarCaixa();
+}
+
+// Requisição autenticada
+async function api(caminho, opcoes = {}) {
+    const r = await fetch(`${API}${caminho}`, {
+        ...opcoes,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Token': sessao.token,
+            ...(opcoes.headers || {})
+        }
+    });
+
+    const d = await r.json().catch(() => ({}));
+
+    if (r.status === 401) {
+        alert('Sua sessão expirou. Faça login novamente.');
+        sair();
+        throw new Error('Sessão expirada');
+    }
+
+    if (!r.ok) {
+        // Leva o corpo da resposta junto: alguns erros (como a confirmação de
+        // variação de preço) precisam dos dados, não só da mensagem.
+        const falha = new Error(d.erro || `Erro ${r.status}`);
+        falha.status = r.status;
+        falha.dados = d;
+        throw falha;
+    }
+    return d;
+}
+
+function aviso(mensagem, tipo = 'ok') {
+    const el = document.getElementById('msg-global');
+    el.textContent = mensagem;
+    el.className = `msg-global visivel ${tipo}`;
+    setTimeout(() => { el.className = 'msg-global'; }, 5000);
+}
+
+// ===================== ABAS =====================
+function trocarAba(nome) {
+    document.querySelectorAll('.aba').forEach(b => b.classList.toggle('ativa', b.dataset.aba === nome));
+    document.querySelectorAll('.conteudo').forEach(s => s.style.display = 'none');
+    document.getElementById(`aba-${nome}`).style.display = 'block';
+
+    if (nome === 'precos') carregarProdutosAdmin();
+    if (nome === 'auditoria') carregarAuditoria();
+    if (nome === 'usuarios') carregarUsuarios();
+    if (nome === 'caixa') carregarCaixa();
+    if (nome === 'suspeitas') carregarSuspeitas();
+    if (nome === 'convenios') carregarConvenios();
+    if (nome === 'indicacoes') carregarIndicacoesAdmin();
+    if (nome === 'frentistas') carregarFrentistasAdmin();
+    if (nome === 'liberacoes') carregarLiberacoes();
+    if (nome === 'cupons') abrirCuponsDoDia();
+    else pararAutoCupons();   // não fica batendo na API numa aba que ninguém vê
+}
+
+// ===================== LIBERAR CUPOM EXTRA (só Master) =====================
+//
+// A regra normal: um cupom de combustível por dia, um de óleo a cada 7 dias,
+// contando a CATEGORIA e não o produto. Aqui o Master abre exceção.
+
+function escaparHtml(t) {
+    return String(t || '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function buscarClientes(evento) {
+    evento.preventDefault();
+    const termo = document.getElementById('busca-cliente').value.trim();
+    const erro = document.getElementById('busca-erro');
+    const alvo = document.getElementById('resultado-busca');
+
+    erro.textContent = '';
+    if (termo.length < 3) {
+        erro.textContent = 'Digite ao menos 3 caracteres.';
+        return false;
+    }
+
+    alvo.innerHTML = '<p class="carregando">Procurando...</p>';
+
+    try {
+        const d = await api(`/admin/clientes/buscar?q=${encodeURIComponent(termo)}`);
+
+        if (!d.clientes.length) {
+            alvo.innerHTML = '<p class="ajuda">Nenhum cliente encontrado com esse termo.</p>';
+            return false;
+        }
+
+        alvo.innerHTML = d.clientes.map(c => {
+            const comb = c.consumo.combustivel;
+            const oleo = c.consumo.oleo;
+
+            // O que o Master precisa saber antes de decidir: o cliente já usou
+            // o cupom da categoria hoje/nesta semana?
+            const linhaConsumo = (rotulo, info, quando) => {
+                if (!info.tem_cupom) {
+                    return `<span style="color:#2e7d32;">✅ ${rotulo}: disponível</span>`;
+                }
+                if (info.usado) {
+                    return `<span style="color:#c62828;">🚫 ${rotulo}: já usou
+                            (${escaparHtml(info.produto)}, ${quando})</span>`;
+                }
+                return `<span style="color:#e65100;">⏳ ${rotulo}: cupom gerado e
+                        ainda não usado (${escaparHtml(info.produto)})</span>`;
+            };
+
+            const fmt = data => data ? data.split('-').reverse().join('/') : '';
+
+            const pendentes = (c.liberacoes_pendentes || []).map(l =>
+                `<div style="background:#fff8e1;border-left:3px solid #ffb300;padding:8px 10px;
+                             margin-top:6px;font-size:13px;">
+                    🎟️ Já tem liberação de <strong>${escaparHtml(l.categoria)}</strong> em aberto
+                    — "${escaparHtml(l.motivo)}" (vale até ${fmt(l.validade)})
+                 </div>`).join('');
+
+            const situacao = c.status !== 'ativo'
+                ? `<span class="badge" style="background:#c62828;color:#fff;">${escaparHtml(c.status)}</span>`
+                : '';
+
+            return `
+            <div class="card" style="margin-top:12px;">
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <strong style="font-size:16px;">${escaparHtml(c.nome)}</strong> ${situacao}<br>
+                        <span class="ajuda">
+                            Placa <strong>${escaparHtml(c.placa) || '—'}</strong> ·
+                            CPF ${escaparHtml(c.cpf)} ·
+                            ${escaparHtml(c.ocupacao) || '—'}
+                            ${c.empresa_convenio ? '· ' + escaparHtml(c.empresa_convenio) : ''}
+                        </span>
+                    </div>
+                </div>
+
+                <div style="margin:12px 0;font-size:14px;line-height:1.9;">
+                    ${linhaConsumo('Combustível hoje', comb, fmt(comb.data))}<br>
+                    ${linhaConsumo('Óleo nos últimos 7 dias', oleo, fmt(oleo.data))}
+                </div>
+
+                ${pendentes}
+
+                <div style="border-top:1px solid #eee;margin-top:12px;padding-top:12px;">
+                    <label style="font-size:13px;font-weight:600;">
+                        Motivo da liberação (obrigatório)
+                    </label>
+                    <input type="text" id="motivo-${c.id}" maxlength="200"
+                           placeholder="Ex.: motorista fez viagem longa, cortesia por reclamação"
+                           style="width:100%;padding:10px;margin:6px 0 10px;font-size:14px;
+                                  border:1.5px solid #d1d5db;border-radius:6px;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'combustivel')">
+                            ⛽ Liberar 1 combustível
+                        </button>
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'oleo')">
+                            🛢️ Liberar 1 óleo
+                        </button>
+                        <button class="btn-mini" onclick="liberarExtra(${c.id}, 'qualquer')">
+                            🎟️ Liberar 1 de qualquer um
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+    return false;
+}
+
+async function liberarExtra(clienteId, categoria) {
+    const campo = document.getElementById(`motivo-${clienteId}`);
+    const motivo = (campo?.value || '').trim();
+
+    if (motivo.length < 5) {
+        aviso('Escreva o motivo da liberação antes de liberar.', 'erro');
+        campo?.focus();
+        return;
+    }
+
+    try {
+        const d = await api('/admin/liberacoes', {
+            method: 'POST',
+            body: JSON.stringify({ cliente_id: clienteId, categoria, motivo })
+        });
+        aviso(`✅ ${d.mensagem}`);
+        if (campo) campo.value = '';
+        carregarLiberacoes();
+        // Recarrega a busca para a ficha do cliente já mostrar a liberação
+        document.getElementById('busca-cliente')?.form?.requestSubmit();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
+}
+
+async function carregarLiberacoes() {
+    const abertas = document.getElementById('liberacoes-abertas');
+    const historico = document.getElementById('liberacoes-historico');
+    if (!abertas) return;
+
+    abertas.innerHTML = '<p class="carregando">Carregando...</p>';
+
+    try {
+        const d = await api('/admin/liberacoes');
+        const fmt = t => t ? String(t).split(' ')[0].split('-').reverse().join('/') : '';
+
+        abertas.innerHTML = d.abertas.length ? `
+            <table class="tabela">
+                <thead><tr><th>Cliente</th><th>Categoria</th><th>Motivo</th>
+                           <th>Liberado por</th><th>Vale até</th><th></th></tr></thead>
+                <tbody>
+                ${d.abertas.map(l => `
+                    <tr>
+                        <td><strong>${escaparHtml(l.cliente_nome)}</strong><br>
+                            <span class="ajuda">${escaparHtml(l.placa) || ''}</span></td>
+                        <td>${escaparHtml(l.categoria_nome)}</td>
+                        <td>${escaparHtml(l.motivo)}</td>
+                        <td>${escaparHtml(l.liberado_por)}</td>
+                        <td>${fmt(l.validade)}</td>
+                        <td><button class="btn-mini" onclick="cancelarLiberacao(${l.id})">
+                            Cancelar</button></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`
+            : '<p class="ajuda">Nenhuma liberação em aberto.</p>';
+
+        historico.innerHTML = d.historico.length ? `
+            <table class="tabela">
+                <thead><tr><th>Cliente</th><th>Categoria</th><th>Motivo</th>
+                           <th>Liberado por</th><th>Situação</th></tr></thead>
+                <tbody>
+                ${d.historico.map(l => `
+                    <tr>
+                        <td>${escaparHtml(l.cliente_nome)}</td>
+                        <td>${escaparHtml(l.categoria_nome)}</td>
+                        <td>${escaparHtml(l.motivo)}</td>
+                        <td>${escaparHtml(l.liberado_por)}</td>
+                        <td>${l.usada
+                            ? '✅ usada em ' + fmt(l.data_uso)
+                            : '⌛ expirou sem uso'}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>`
+            : '<p class="ajuda">Nada por aqui ainda.</p>';
+    } catch (e) {
+        abertas.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+}
+
+async function cancelarLiberacao(id) {
+    try {
+        const d = await api(`/admin/liberacoes/${id}/cancelar`, { method: 'POST' });
+        aviso(`✅ ${d.mensagem}`);
+        carregarLiberacoes();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
+}
+
+// ===================== CUPONS DO DIA (tela do caixa) =====================
+//
+// Fica aberta o dia todo no guichê. Duas funções: ler o cupom do motorista e
+// dar baixa, e mostrar o movimento do dia.
+//
+// A trava contra reuso NÃO está aqui — está no saldo gravado no banco, que o
+// /api/cupom/usar confere a cada baixa. Esta tela é para enxergar e agir
+// rápido, não para vigiar.
+
+let cuponsDoDia = [];
+let timerCupons = null;
+let cupomAberto = null;
+
+function abrirCuponsDoDia() {
+    const campoData = document.getElementById('cupons-data');
+    if (campoData && !campoData.value) {
+        campoData.value = dataLocalISO();
+    }
+    carregarCuponsDoDia();
+    alternarAutoCupons();
+    focarLeitura();
+}
+
+function focarLeitura() {
+    const campo = document.getElementById('cupom-codigo');
+    if (campo) { campo.focus(); campo.select(); }
+}
+
+function pararAutoCupons() {
+    if (timerCupons) { clearInterval(timerCupons); timerCupons = null; }
+}
+
+function alternarAutoCupons() {
+    pararAutoCupons();
+    const ligado = document.getElementById('cupons-auto');
+    const abaAtiva = document.getElementById('aba-cupons');
+    if (ligado && ligado.checked && abaAtiva && abaAtiva.style.display !== 'none') {
+        // 20s: rápido o bastante para o caixa acompanhar, devagar o bastante
+        // para não castigar o servidor no plano gratuito.
+        timerCupons = setInterval(() => carregarCuponsDoDia(true), 20000);
+    }
+}
+
+async function carregarCuponsDoDia(silencioso = false) {
+    const dia = document.getElementById('cupons-data').value ||
+                dataLocalISO();
+    const alvo = document.getElementById('cupons-conteudo');
+
+    try {
+        const d = await api(`/admin/cupons-do-dia?data=${encodeURIComponent(dia)}`);
+        cuponsDoDia = d.cupons || [];
+        renderizarResumoCupons(d.resumo || {});
+        renderizarCuponsDoDia();
+
+        const agora = new Date();
+        document.getElementById('cupons-atualizado').textContent =
+            'Atualizado às ' + String(agora.getHours()).padStart(2, '0') + ':' +
+            String(agora.getMinutes()).padStart(2, '0') + ':' +
+            String(agora.getSeconds()).padStart(2, '0');
+    } catch (e) {
+        if (!silencioso) alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+function renderizarResumoCupons(r) {
+    document.getElementById('cupons-resumo').innerHTML = `
+        <div class="tile"><span class="rotulo">Cupons gerados</span><strong>${r.total || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Sem uso</span><strong>${r.emitidos || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Parciais</span><strong>${r.parciais || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Esgotados</span><strong>${r.esgotados || 0}</strong></div>
+        <div class="tile"><span class="rotulo">Litros abastecidos</span><strong>${(r.litros_abastecidos || 0).toFixed(2)}</strong></div>
+        <div class="tile"><span class="rotulo">Desconto concedido</span><strong>R$ ${(r.desconto_concedido || 0).toFixed(2)}</strong></div>`;
+}
+
+const ROTULO_SITUACAO = {
+    emitido:  { texto: 'Sem uso',  cor: '#546e7a' },
+    parcial:  { texto: 'Parcial',  cor: '#ef6c00' },
+    esgotado: { texto: 'Esgotado', cor: '#2e7d32' }
+};
+
+function renderizarCuponsDoDia() {
+    const alvo = document.getElementById('cupons-conteudo');
+    const filtro = document.getElementById('cupons-filtro').value;
+    const busca = (document.getElementById('cupons-busca').value || '').trim().toLowerCase();
+
+    let lista = cuponsDoDia;
+    if (filtro) lista = lista.filter(c => c.situacao === filtro);
+    if (busca) {
+        lista = lista.filter(c =>
+            (c.cliente_nome || '').toLowerCase().includes(busca) ||
+            (c.placa || '').toLowerCase().includes(busca) ||
+            (c.codigo || '').toLowerCase().includes(busca));
+    }
+
+    if (!lista.length) {
+        alvo.innerHTML = '<p class="vazio">' +
+            (cuponsDoDia.length ? 'Nenhum cupom com esse filtro.'
+                                : 'Nenhum cupom gerado neste dia ainda.') + '</p>';
+        return;
+    }
+
+    alvo.innerHTML = `
+        <table class="tabela">
+            <thead>
+                <tr>
+                    <th>Situação</th><th>Motorista</th><th>Placa</th><th>Produto</th>
+                    <th>Usado</th><th>Saldo</th><th>Último uso</th><th>Código</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${lista.map(c => {
+                    const s = ROTULO_SITUACAO[c.situacao] || ROTULO_SITUACAO.emitido;
+                    const postos = c.postos && c.postos.length ? c.postos.join(', ') : '';
+                    const ultimo = c.ultima_hora
+                        ? `${escapar(c.ultima_hora)}${postos ? ' · ' + escapar(postos) : ''}`
+                        : '—';
+                    return `
+                    <tr>
+                        <td><span class="badge" style="background:${s.cor}; color:#fff;">${s.texto}</span></td>
+                        <td>${escapar(c.cliente_nome || '—')}
+                            ${c.empresa_convenio ? `<br><small>${escapar(c.empresa_convenio)}</small>` : ''}</td>
+                        <td>${escapar(c.placa || '—')}</td>
+                        <td>${escapar((c.produto_icone || '') + ' ' + (c.produto_nome || '—'))}</td>
+                        <td>${c.quantidade_utilizada.toFixed(2)} ${escapar(c.unidade)}</td>
+                        <td><strong>${c.situacao === 'esgotado'
+                            ? '—'
+                            : c.quantidade_restante.toFixed(2) + ' ' + escapar(c.unidade)}</strong></td>
+                        <td>${ultimo}</td>
+                        <td><code style="font-size:11px;">${escapar(c.codigo)}</code></td>
+                        <td>${c.situacao !== 'esgotado'
+                            ? `<button class="btn" onclick="consultarCodigo('${escapar(c.codigo)}')">Dar baixa</button>`
+                            : ''}</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+}
+
+// ---------- leitura e baixa ----------
+
+function lerCupomCaixa(evento) {
+    evento.preventDefault();
+    const codigo = document.getElementById('cupom-codigo').value.trim();
+    if (!codigo) {
+        document.getElementById('cupom-leitura-erro').textContent = 'Digite ou leia o código.';
+        return false;
+    }
+    consultarCodigo(codigo);
+    return false;
+}
+
+async function consultarCodigo(codigo) {
+    document.getElementById('cupom-leitura-erro').textContent = '';
+    document.getElementById('baixa-erro').textContent = '';
+
+    try {
+        const c = await api('/cupom/consultar?qrcode=' + encodeURIComponent(codigo));
+        cupomAberto = c;
+        document.getElementById('cupom-codigo').value = '';
+        exibirCupomCaixa(c);
+    } catch (e) {
+        cupomAberto = null;
+        document.getElementById('card-cupom-aberto').style.display = 'none';
+        document.getElementById('cupom-leitura-erro').textContent = e.message;
+        focarLeitura();
+    }
+}
+
+function exibirCupomCaixa(c) {
+    const card = document.getElementById('card-cupom-aberto');
+    const faixa = document.getElementById('cupom-faixa');
+    const bloco = document.getElementById('bloco-baixa');
+    card.style.display = 'block';
+
+    const alertaPlaca = c.placa_em_varios_cadastros
+        ? `<p style="color:#c62828; margin:8px 0;">⚠ Esta placa está em ${c.placa_qtd_cadastros}
+             cadastros. Pode ser táxi dividido por turno — confira o motorista.</p>`
+        : '';
+
+    document.getElementById('cupom-detalhe').innerHTML = `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-top:10px;">
+            <div><small>Motorista</small><br><strong>${escapar(c.cliente_nome || '—')}</strong></div>
+            <div><small>Placa</small><br><strong style="font-size:19px;">${escapar(c.placa || '—')}</strong></div>
+            <div><small>Produto</small><br><strong>${escapar((c.produto_icone || '') + ' ' + (c.produto_nome || '—'))}</strong></div>
+            <div><small>Preço na bomba</small><br><strong>R$ ${(c.preco_bomba || 0).toFixed(2)}</strong></div>
+            <div><small>Preço com desconto</small><br><strong style="color:#2e7d32;">R$ ${(c.preco_com_desconto || 0).toFixed(2)}</strong></div>
+            <div><small>Saldo do cupom</small><br><strong style="font-size:19px;">${(c.quantidade_restante || 0).toFixed(2)} ${escapar(c.unidade || 'L')}</strong></div>
+        </div>
+        ${alertaPlaca}`;
+
+    if (c.valido) {
+        faixa.className = 'faixa ok';
+        faixa.textContent = c.uso_unico
+            ? '✓ Cupom válido — atenção: vale para UM abastecimento só'
+            : '✓ Cupom válido — pode abastecer';
+        bloco.style.display = 'block';
+
+        // O caixa precisa avisar o motorista ANTES de encher, senão a
+        // reclamação vem depois — e com razão.
+        const nota = document.getElementById('nota-uso-unico');
+        if (nota) {
+            nota.hidden = !c.uso_unico;
+            nota.textContent = c.uso_unico
+                ? `⚠ Avise o motorista: o que sobrar dos ${(c.quantidade_restante || 0).toFixed(2)} ` +
+                  `${c.unidade || 'L'} não fica para depois. O cupom encerra nesta baixa.`
+                : '';
+        }
+
+        document.getElementById('baixa-saldo').textContent =
+            (c.quantidade_restante || 0).toFixed(2) + ' ' + (c.unidade || 'L');
+        const campo = document.getElementById('baixa-litros');
+        campo.value = '';
+        campo.max = c.quantidade_restante;
+        campo.focus();
+    } else {
+        faixa.className = 'faixa erro';
+        faixa.textContent = '✖ ' + (c.motivo || 'Cupom não pode ser usado');
+        bloco.style.display = 'none';
+    }
+}
+
+function usarSaldoTotalCaixa() {
+    if (!cupomAberto) return;
+    document.getElementById('baixa-litros').value = cupomAberto.quantidade_restante;
+}
+
+function fecharCupomCaixa() {
+    cupomAberto = null;
+    document.getElementById('card-cupom-aberto').style.display = 'none';
+    focarLeitura();
+}
+
+async function confirmarBaixaCaixa() {
+    if (!cupomAberto) return;
+
+    const erroEl = document.getElementById('baixa-erro');
+    const botao = document.getElementById('btn-baixa');
+    erroEl.textContent = '';
+
+    const litros = parseFloat(document.getElementById('baixa-litros').value);
+    const valor = parseFloat(document.getElementById('baixa-valor').value) || 0;
+
+    if (!litros || litros <= 0) {
+        erroEl.textContent = 'Informe quantos litros foram abastecidos.';
+        return;
+    }
+    if (litros > cupomAberto.quantidade_restante + 0.001) {
+        erroEl.textContent = `Excede o saldo: restam ${cupomAberto.quantidade_restante.toFixed(2)} ${cupomAberto.unidade || 'L'}.`;
+        return;
+    }
+
+    botao.disabled = true;
+    botao.textContent = 'Registrando…';
+
+    try {
+        const d = await api('/cupom/usar', {
+            method: 'POST',
+            body: JSON.stringify({
+                qrcode: cupomAberto.qrcode,
+                produto_id: cupomAberto.produto_id,
+                quantidade: litros,
+                valor_sem_desconto: valor
+            })
+        });
+
+        aviso(`Baixa registrada: ${litros.toFixed(2)} ${cupomAberto.unidade || 'L'} · ` +
+              `saldo restante ${(d.quantidade_restante ?? 0).toFixed(2)}`);
+        fecharCupomCaixa();
+        carregarCuponsDoDia();
+    } catch (e) {
+        erroEl.textContent = e.message;
+    } finally {
+        botao.disabled = false;
+        botao.textContent = '✅ Dar baixa';
+    }
+}
+
+// ===================== CONVÊNIOS COM EMPRESAS =====================
+//
+// A empresa deixou de ser texto livre no cadastro do cliente. Aqui a gerência
+// controla as duas travas: quem entra na lista (convênio assinado) e quem
+// passa da fila (vínculo conferido).
+
+function escapar(txt) {
+    return String(txt == null ? '' : txt)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function formatarCnpjCampo(valor) {
+    const n = String(valor || '').replace(/\D/g, '').slice(0, 14);
+    if (n.length <= 2) return n;
+    if (n.length <= 5) return `${n.slice(0,2)}.${n.slice(2)}`;
+    if (n.length <= 8) return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5)}`;
+    if (n.length <= 12) return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5,8)}/${n.slice(8)}`;
+    return `${n.slice(0,2)}.${n.slice(2,5)}.${n.slice(5,8)}/${n.slice(8,12)}-${n.slice(12)}`;
+}
+
+async function carregarConvenios() {
+    await Promise.all([carregarPendentes(), carregarEmpresas()]);
+}
+
+async function carregarPendentes() {
+    const alvo = document.getElementById('pendentes-conteudo');
+    try {
+        const d = await api('/admin/cadastros-pendentes');
+        atualizarSeloPendentes(d.total || 0);
+        window.pendentesCache = d.pendentes || [];
+
+        if (!d.pendentes || !d.pendentes.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum cadastro aguardando. Tudo em dia.</p>';
+            return;
+        }
+
+        const souMaster = (d.meu_nivel || sessao.nivel) === 'master';
+
+        alvo.innerHTML = d.pendentes.map(p => {
+            const sinalEmail = p.email_corporativo
+                ? '<span style="color:#0ca30c;">✓ e-mail corporativo confere</span>'
+                : `<span style="color:#e65100;">⚠ e-mail não é da empresa` +
+                  `${p.empresa_dominio ? ' (esperado @' + escapar(p.empresa_dominio) + ')' : ''}</span>`;
+            const sinalFoto = p.tem_comprovante
+                ? `<button class="btn" onclick="verComprovante(${p.id})">Ver comprovante</button>`
+                : '<span style="color:#c62828;">sem comprovante</span>';
+
+            // Exceção ao e-mail corporativo é alçada do Master. Se quem está
+            // olhando é gerência, o botão some e a tela diz o porquê — botão
+            // que existe e dá erro ao clicar é pior do que botão nenhum.
+            const travadoParaMim = p.exige_master && !souMaster;
+
+            const avisoMaster = p.exige_master
+                ? `<p style="background:#fff3e0; border-left:4px solid #FF9800; padding:8px 10px;
+                          border-radius:6px; margin:8px 0; font-size:13px; color:#e65100;">
+                     🔒 Exceção: sem e-mail corporativo.
+                     ${travadoParaMim
+                        ? 'Só o administrador Master pode liberar este cadastro.'
+                        : 'Confira bem o comprovante antes de aprovar — a prova de vínculo mais forte não veio.'}
+                   </p>`
+                : '';
+
+            const botoesDecisao = travadoParaMim
+                ? `<span style="color:#888; font-size:13px; align-self:center;">
+                     Aguardando o Master
+                   </span>`
+                : `<button class="btn btn-primary" onclick="decidirCadastro(${p.id}, 'aprovar', '${escapar(p.nome)}')">
+                       ✅ Aprovar
+                   </button>`;
+
+            return `
+            <div class="card" style="margin-bottom:12px;${p.exige_master ? ' border-left:4px solid #FF9800;' : ''}">
+                <h4 style="margin:0 0 6px;">${escapar(p.nome)}</h4>
+                <p style="margin:2px 0; font-size:14px;">
+                    <strong>${escapar(p.empresa || '—')}</strong>
+                    ${p.empresa_cnpj ? ` · CNPJ ${escapar(p.empresa_cnpj)}` : ''}
+                </p>
+                <p style="margin:2px 0; font-size:13px; color:#555;">
+                    ${escapar(p.email)} · ${escapar(p.tel || '')} · placa ${escapar(p.placa || '—')}
+                </p>
+                <p style="margin:6px 0; font-size:13px;">${sinalEmail}</p>
+                ${avisoMaster}
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+                    ${sinalFoto}
+                    ${botoesDecisao}
+                    <button class="btn" style="background:#c62828; color:#fff;"
+                            onclick="decidirCadastro(${p.id}, 'recusar', '${escapar(p.nome)}')">
+                        ✖ Recusar
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+function atualizarSeloPendentes(total) {
+    const selo = document.getElementById('selo-pendentes');
+    if (!selo) return;
+    selo.textContent = total;
+    selo.hidden = !total;
+}
+
+async function decidirCadastro(clienteId, decisao, nome) {
+    let motivo = null;
+
+    if (decisao === 'recusar') {
+        motivo = prompt(`Por que o cadastro de ${nome} está sendo recusado?\n\n` +
+                        `A pessoa vai ver esse texto no aplicativo.`);
+        if (motivo === null) return;
+        if (!motivo.trim()) {
+            aviso('É preciso escrever o motivo da recusa.', 'erro');
+            return;
+        }
+    } else {
+        const p = (window.pendentesCache || []).find(x => x.id === clienteId);
+        const extra = p && p.exige_master
+            ? `\n\n⚠ ATENÇÃO: esta pessoa NÃO usou o e-mail corporativo` +
+              `${p.empresa_dominio ? ' (@' + p.empresa_dominio + ')' : ''}. ` +
+              `Você está abrindo uma exceção — confira o comprovante de vínculo.`
+            : '';
+        if (!confirm(`Aprovar o cadastro de ${nome}?\n\n` +
+                     `Ele passa a gerar cupons com desconto imediatamente.${extra}`)) {
+            return;
+        }
+    }
+
+    try {
+        const d = await api(`/admin/cadastros/${clienteId}/decidir`, {
+            method: 'POST',
+            body: JSON.stringify({ decisao, motivo })
+        });
+        aviso(d.mensagem);
+        carregarConvenios();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function cadastrarEmpresaConvenio() {
+    const nome = document.getElementById('empresa-nome').value.trim();
+    const cnpj = document.getElementById('empresa-cnpj').value.trim();
+    const dominio = document.getElementById('empresa-dominio').value.trim();
+    const limite = document.getElementById('empresa-limite').value;
+
+    if (nome.length < 3) return aviso('Informe o nome da empresa.', 'erro');
+    if (cnpj.replace(/\D/g, '').length !== 14) return aviso('CNPJ precisa ter 14 números.', 'erro');
+
+    try {
+        const d = await api('/admin/empresas-convenio', {
+            method: 'POST',
+            body: JSON.stringify({
+                nome, cnpj,
+                dominio_email: dominio || null,
+                limite_funcionarios: Number(limite) || 0
+            })
+        });
+        aviso(d.mensagem);
+        ['empresa-nome', 'empresa-cnpj', 'empresa-dominio'].forEach(
+            id => document.getElementById(id).value = '');
+        document.getElementById('empresa-limite').value = 0;
+        carregarEmpresas();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function carregarEmpresas() {
+    const alvo = document.getElementById('empresas-conteudo');
+    try {
+        const d = await api('/admin/empresas-convenio');
+
+        if (!d.empresas || !d.empresas.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhuma empresa cadastrada. ' +
+                'Enquanto não houver, a opção "Outro — convênio" não lista nada no aplicativo.</p>';
+            return;
+        }
+
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Empresa</th><th>CNPJ</th><th>E-mail exigido</th>
+                        <th>Aprovados</th><th>Na fila</th><th>Limite</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.empresas.map(e => `
+                        <tr style="${e.ativo ? '' : 'opacity:.5;'}">
+                            <td>${escapar(e.nome)}${e.ativo ? '' : ' <small>(encerrado)</small>'}</td>
+                            <td>${escapar(e.cnpj)}</td>
+                            <td>${e.dominio_email ? '@' + escapar(e.dominio_email) : '—'}</td>
+                            <td>${e.aprovados}</td>
+                            <td>${e.pendentes}</td>
+                            <td>${e.limite_funcionarios || 'sem teto'}</td>
+                            <td>
+                                <button class="btn" onclick="alternarConvenio(${e.id}, ${e.ativo ? 0 : 1}, '${escapar(e.nome)}')">
+                                    ${e.ativo ? 'Encerrar' : 'Reativar'}
+                                </button>
+                            </td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>`;
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+async function alternarConvenio(empresaId, ativo, nome) {
+    const acao = ativo ? 'reativar' : 'encerrar';
+    if (!confirm(`Deseja ${acao} o convênio da ${nome}?\n\n` +
+                 (ativo ? 'Ela volta a aparecer no cadastro do aplicativo.'
+                        : 'Ela some do cadastro do aplicativo. Quem já está aprovado continua usando.'))) {
+        return;
+    }
+    try {
+        const d = await api(`/admin/empresas-convenio/${empresaId}`, {
+            method: 'POST',
+            body: JSON.stringify({ ativo })
+        });
+        aviso(d.mensagem);
+        carregarEmpresas();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+// ===================== PROGRAMA DE INDICAÇÃO =====================
+
+// AAAA-MM-DD -> DD/MM/AAAA, sem passar por `new Date()`: uma data solta
+// interpretada como Date vira meia-noite em UTC e volta um dia atrás aqui
+// no Brasil. É a mesma armadilha do toISOString() que corrigimos em 23/08,
+// só que na direção contrária.
+function dataBR(iso) {
+    const partes = String(iso || '').slice(0, 10).split('-');
+    return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : String(iso || '');
+}
+
+async function carregarIndicacoesAdmin() {
+    await Promise.all([carregarConfigIndicacoes(), carregarRankingIndicacoes()]);
+}
+
+async function carregarConfigIndicacoes() {
+    try {
+        const d = await api('/admin/indicacoes/config');
+        document.getElementById('indicacoes-meta').value = d.meta_indicacoes;
+        document.getElementById('indicacoes-valor').value = d.valor_recompensa.toFixed(2);
+        document.getElementById('indicacoes-min-combustivel').value = d.minimo_litros_combustivel;
+        document.getElementById('indicacoes-min-oleo').value = d.minimo_litros_oleo;
+        document.getElementById('indicacoes-fim-campanha').value = d.data_fim_campanha || '';
+        document.getElementById('indicacoes-validade-premio').value = d.validade_premio_dias;
+        document.getElementById('indicacoes-validade-indicacao').value = d.validade_indicacao_dias;
+        document.getElementById('indicacoes-ativo').checked = d.ativo;
+
+        // Campanha vencida não avisa sozinha em lugar nenhum — se a data
+        // passou e ninguém percebeu, o programa está parado em silêncio.
+        const alvoAviso = document.getElementById('indicacoes-config-aviso');
+        if (alvoAviso) {
+            alvoAviso.innerHTML = d.campanha_encerrada
+                ? `<div class="aviso-trava">⏳ <strong>A campanha está encerrada</strong> —
+                   a data de ${escapar(d.data_fim_campanha)} já passou e nenhum prêmio novo
+                   está sendo gerado. Para reabrir, mude a data ou apague o campo.</div>`
+                : '';
+        }
+    } catch (e) {
+        document.getElementById('indicacoes-config-msg').innerHTML =
+            `<p class="vazio">Não consegui carregar a configuração: ${escapar(e.message)}</p>`;
+    }
+}
+
+async function salvarConfigIndicacoes() {
+    const meta = Number(document.getElementById('indicacoes-meta').value);
+    const valor = Number(document.getElementById('indicacoes-valor').value);
+    const minCombustivel = Number(document.getElementById('indicacoes-min-combustivel').value);
+    const minOleo = Number(document.getElementById('indicacoes-min-oleo').value);
+    const fimCampanha = document.getElementById('indicacoes-fim-campanha').value;
+    const validadePremio = Number(document.getElementById('indicacoes-validade-premio').value);
+    const validadeIndicacao = Number(document.getElementById('indicacoes-validade-indicacao').value);
+    const ativo = document.getElementById('indicacoes-ativo').checked;
+    const msg = document.getElementById('indicacoes-config-msg');
+
+    if (!meta || meta < 1) return aviso('A meta de indicações precisa ser pelo menos 1.', 'erro');
+    if (valor < 0 || Number.isNaN(valor)) return aviso('Informe o valor do prêmio.', 'erro');
+    if (minCombustivel < 0 || Number.isNaN(minCombustivel)) {
+        return aviso('Informe o mínimo de litros de combustível.', 'erro');
+    }
+    if (minOleo < 0 || Number.isNaN(minOleo)) {
+        return aviso('Informe o mínimo de litros de óleo.', 'erro');
+    }
+    if (validadePremio < 0 || Number.isNaN(validadePremio)) {
+        return aviso('Informe em quantos dias o prêmio vence (0 = sem prazo).', 'erro');
+    }
+    if (validadeIndicacao < 0 || Number.isNaN(validadeIndicacao)) {
+        return aviso('Informe por quantos dias a indicação vale (0 = sem prazo).', 'erro');
+    }
+
+    // Data de fim no passado é quase sempre engano de digitação — e o efeito
+    // é o programa parar de gerar prêmios em silêncio.
+    if (fimCampanha && fimCampanha < dataLocalISO()) {
+        if (!confirm(`A data ${fimCampanha} já passou.\n\n` +
+                     `Salvando assim, a campanha fica ENCERRADA e nenhum prêmio novo ` +
+                     `será gerado. Prêmios já ganhos continuam valendo.\n\nConfirma?`)) {
+            return;
+        }
+    }
+
+    try {
+        const d = await api('/admin/indicacoes/config', {
+            method: 'POST',
+            body: JSON.stringify({
+                meta_indicacoes: meta,
+                valor_recompensa: valor,
+                minimo_litros_combustivel: minCombustivel,
+                minimo_litros_oleo: minOleo,
+                data_fim_campanha: fimCampanha || null,
+                validade_premio_dias: validadePremio,
+                validade_indicacao_dias: validadeIndicacao,
+                ativo
+            })
+        });
+        aviso(d.mensagem);
+        msg.innerHTML = '';
+        carregarConfigIndicacoes();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function carregarRankingIndicacoes() {
+    const alvoRanking = document.getElementById('indicacoes-ranking');
+    const alvoPremios = document.getElementById('indicacoes-premios');
+    try {
+        const d = await api('/admin/indicacoes');
+
+        if (!d.ranking || !d.ranking.length) {
+            alvoRanking.innerHTML = '<p class="vazio">Ninguém indicou ninguém ainda.</p>';
+        } else {
+            alvoRanking.innerHTML = `
+                <table class="tabela">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th><th>Código</th>
+                            <th>Indicações que viraram cliente</th><th>Total de cadastros indicados</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.ranking.map(r => `
+                            <tr>
+                                <td>${escapar(r.indicador_nome)}</td>
+                                <td>${escapar(r.codigo_indicacao || '—')}</td>
+                                <td>${r.total_positivas}</td>
+                                <td>${r.total_indicados}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        const rotuloStatus = {
+            disponivel: 'Disponível',
+            aplicado: 'Aplicado a um cupom',
+            expirado: '⏳ Venceu sem uso'
+        };
+        if (!d.premios || !d.premios.length) {
+            alvoPremios.innerHTML = '<p class="vazio">Nenhum prêmio concedido ainda.</p>';
+        } else {
+            alvoPremios.innerHTML = `
+                <table class="tabela">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th><th>Valor</th><th>Ao completar</th>
+                            <th>Status</th><th>Concedido em</th><th>Vale até</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.premios.map(p => `
+                            <tr style="${p.status === 'expirado' ? 'opacity:.55;' : ''}">
+                                <td>${escapar(p.cliente_nome)}</td>
+                                <td>R$ ${Number(p.valor).toFixed(2)}</td>
+                                <td>${p.indicacoes_completas} indicações</td>
+                                <td>${rotuloStatus[p.status] || escapar(p.status)}</td>
+                                <td>${escapar((p.data_concessao || '').slice(0, 16).replace('T', ' '))}</td>
+                                <td>${p.validade ? escapar(dataBR(p.validade)) : 'sem prazo'}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+    } catch (e) {
+        alvoRanking.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+        alvoPremios.innerHTML = '';
+    }
+}
+
+// ===================== CAMPANHA DE FRENTISTAS (só Master) =====================
+//
+// Frentista é cliente diferenciado: 1 combustível a cada 7 dias corridos,
+// zero óleo. Conta só nasce ou converte por aqui — nunca pelo cadastro
+// público do motorista.
+
+async function cadastrarFrentista() {
+    const nome = document.getElementById('frentista-nome').value.trim();
+    const cpf = document.getElementById('frentista-cpf').value.replace(/\D/g, '');
+    const tel = document.getElementById('frentista-tel').value.trim();
+    const placa = document.getElementById('frentista-placa').value.trim();
+    const email = document.getElementById('frentista-email').value.trim();
+    const senha = document.getElementById('frentista-senha').value;
+    const msg = document.getElementById('frentista-cadastro-msg');
+
+    if (!nome) return aviso('Informe o nome.', 'erro');
+    if (cpf.length !== 11) return aviso('CPF precisa ter 11 dígitos.', 'erro');
+    if (!email.includes('@')) return aviso('Informe um e-mail válido.', 'erro');
+    if (senha.length < 6) return aviso('Senha precisa de pelo menos 6 caracteres.', 'erro');
+
+    try {
+        const d = await api('/admin/frentistas', {
+            method: 'POST',
+            body: JSON.stringify({ nome, cpf, tel, placa, email, senha })
+        });
+        aviso(d.mensagem);
+        msg.innerHTML = '';
+        document.getElementById('frentista-nome').value = '';
+        document.getElementById('frentista-cpf').value = '';
+        document.getElementById('frentista-tel').value = '';
+        document.getElementById('frentista-placa').value = '';
+        document.getElementById('frentista-email').value = '';
+        document.getElementById('frentista-senha').value = '';
+        carregarFrentistasAdmin();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+async function reverterFrentista(id, nome) {
+    if (!confirm(`Devolver ${nome} ao regime de cliente comum?\n\n` +
+                 `Ele passa a ter 1 combustível POR DIA (em vez de por semana) e volta ` +
+                 `a poder gerar cupom de óleo normalmente.`)) {
+        return;
+    }
+    try {
+        const d = await api(`/admin/frentistas/${id}/reverter`, { method: 'POST' });
+        aviso(d.mensagem);
+        carregarFrentistasAdmin();
+    } catch (e) {
+        aviso(e.message, 'erro');
+    }
+}
+
+// Telefone e e-mail padrão do cadastro de frentista, para quando o Edmundo
+// ainda não tem os dados individuais de cada um na mão. O telefone pode
+// repetir sem problema (não é único no sistema); o e-mail PRECISA ser único
+// (trava antifraude), então cada frentista ganha um sufixo "+N" diferente —
+// truque do próprio Gmail: todos caem na mesma caixa postocajardins@gmail.com.
+// Edmundo troca por dados reais quando tiver, editando o cadastro depois.
+function preencherPadroesFrentista(quantidadeAtual) {
+    const tel = document.getElementById('frentista-tel');
+    const email = document.getElementById('frentista-email');
+    if (tel && !tel.value) tel.value = '1130611778';
+    if (email && !email.value) {
+        email.value = `postocajardins+${quantidadeAtual + 1}@gmail.com`;
+    }
+}
+
+async function carregarFrentistasAdmin() {
+    const alvo = document.getElementById('frentistas-lista');
+    try {
+        const d = await api('/admin/frentistas');
+        if (!d.frentistas || !d.frentistas.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum frentista cadastrado ainda.</p>';
+            preencherPadroesFrentista(0);
+            return;
+        }
+        const rotuloCupom = {
+            disponivel: '✅ Disponível esta semana',
+            gerado: '⏳ Já gerado esta semana',
+            usado: '🚫 Já usado esta semana'
+        };
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Nome</th><th>CPF</th><th>Placa</th>
+                        <th>Cupom da semana</th><th>Próximo em</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.frentistas.map(f => `
+                        <tr>
+                            <td>${escapar(f.nome)}</td>
+                            <td>${escapar(f.cpf)}</td>
+                            <td>${escapar(f.placa || '—')}</td>
+                            <td>${rotuloCupom[f.cupom_semana] || escapar(f.cupom_semana)}</td>
+                            <td>${f.proximo_cupom_em ? escapar(f.proximo_cupom_em) : '—'}</td>
+                            <td><button class="btn btn-secundario"
+                                onclick="reverterFrentista(${f.id}, '${escapar(f.nome)}')">
+                                Reverter para comum
+                            </button></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>`;
+        preencherPadroesFrentista(d.frentistas.length);
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+// ===================== FECHAMENTO DE CAIXA =====================
+function periodoRapido(inicio, fim) {
+    document.getElementById('caixa-hora-inicio').value = inicio;
+    document.getElementById('caixa-hora-fim').value = fim;
+    carregarCaixa();
+}
+
+async function carregarCaixa() {
+    const data = document.getElementById('caixa-data').value;
+    const posto = document.getElementById('caixa-posto').value;
+    const horaInicio = document.getElementById('caixa-hora-inicio').value;
+    const horaFim = document.getElementById('caixa-hora-fim').value;
+    const produto = document.getElementById('caixa-produto').value;
+
+    document.getElementById('resumo-geral').innerHTML = '<p class="carregando">Carregando...</p>';
+    document.getElementById('turnos-container').innerHTML = '';
+
+    try {
+        const params = new URLSearchParams({ data });
+        if (posto) params.append('poster_id', posto);
+        if (horaInicio) params.append('hora_inicio', horaInicio);
+        if (horaFim) params.append('hora_fim', horaFim);
+        if (produto) params.append('produto_id', produto);
+
+        const d = await api(`/admin/caixa?${params}`);
+        renderizarCaixa(d);
+        preencherFiltroProdutos();
+    } catch (erro) {
+        document.getElementById('resumo-geral').innerHTML =
+            `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+// preenche o seletor de produtos uma única vez
+async function preencherFiltroProdutos() {
+    const select = document.getElementById('caixa-produto');
+    if (select.dataset.carregado) return;
+
+    try {
+        const r = await fetch(`${API}/produtos`);
+        const d = await r.json();
+        select.innerHTML = '<option value="">Todos</option>' +
+            d.produtos.map(p => `<option value="${p.id}">${p.icone || ''} ${p.nome}</option>`).join('');
+        select.dataset.carregado = '1';
+    } catch (e) { /* silencioso */ }
+}
+
+function imprimirRelatorio() {
+    const data = document.getElementById('caixa-data').value;
+    const ini = document.getElementById('caixa-hora-inicio').value;
+    const fim = document.getElementById('caixa-hora-fim').value;
+    const posto = document.getElementById('caixa-posto').value;
+
+    const periodo = ini || fim
+        ? `Período: ${ini || '00:00'} às ${fim || '23:59'}`
+        : 'Período: dia inteiro';
+
+    // cabeçalho que só aparece na impressão
+    let cabecalho = document.getElementById('cabecalho-impressao');
+    if (!cabecalho) {
+        cabecalho = document.createElement('div');
+        cabecalho.id = 'cabecalho-impressao';
+        document.getElementById('painel').prepend(cabecalho);
+    }
+
+    cabecalho.innerHTML = `
+        <h2>Relatório de Caixa — Jardins Sky</h2>
+        <p>Data: <strong>${(data || '').split('-').reverse().join('/')}</strong> ·
+           ${periodo} ·
+           Posto: <strong>${posto || 'CAJ e SKY'}</strong></p>
+        <p class="emitido">Emitido por ${sessao.nome || sessao.usuario} em ${new Date().toLocaleString('pt-BR')}</p>
+    `;
+
+    window.print();
+}
+
+function reais(v) {
+    return (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function litros(v) {
+    return `${(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
+}
+
+function renderizarCaixa(d) {
+    const t = d.total;
+
+    document.getElementById('resumo-geral').innerHTML = `
+        <div class="cartoes">
+            <div class="cartao">
+                <span class="rotulo">Abastecimentos</span>
+                <strong class="valor">${t.abastecimentos}</strong>
+            </div>
+            <div class="cartao">
+                <span class="rotulo">Litros vendidos</span>
+                <strong class="valor">${litros(t.litros)}</strong>
+            </div>
+            <div class="cartao destaque">
+                <span class="rotulo">Recebido no caixa</span>
+                <strong class="valor">${reais(t.valor_recebido)}</strong>
+            </div>
+            <div class="cartao">
+                <span class="rotulo">Desconto concedido</span>
+                <strong class="valor negativo">- ${reais(t.desconto_concedido)}</strong>
+            </div>
+        </div>
+        <p class="nota">Data: <strong>${d.data.split('-').reverse().join('/')}</strong> · Turno agora: ${d.turno_atual}</p>
+    `;
+
+    const f = d.filtros || {};
+    const janela = (f.hora_inicio || f.hora_fim)
+        ? `das ${(f.hora_inicio || '00:00:00').slice(0, 5)} às ${(f.hora_fim || '23:59:59').slice(0, 5)}`
+        : 'dia inteiro';
+    document.getElementById('titulo-abastecimentos').textContent =
+        `Abastecimentos — ${janela} (${d.detalhes.length})`;
+
+    if (!d.turnos.length) {
+        document.getElementById('turnos-container').innerHTML = '';
+        document.getElementById('tabela-detalhes').innerHTML =
+            '<p class="vazio">Nenhum abastecimento neste período.</p>';
+        return;
+    }
+
+    document.getElementById('turnos-container').innerHTML = d.turnos.map(t => `
+        <div class="card turno">
+            <div class="turno-topo">
+                <h3>${t.turno}</h3>
+                <div class="turno-numeros">
+                    <span><strong>${t.abastecimentos}</strong> abast.</span>
+                    <span><strong>${litros(t.litros)}</strong></span>
+                    <span class="recebido"><strong>${reais(t.valor_recebido)}</strong></span>
+                </div>
+            </div>
+
+            <table class="tabela">
+                <thead>
+                    <tr><th>Produto</th><th>Abast.</th><th>Litros</th><th>Recebido</th></tr>
+                </thead>
+                <tbody>
+                    ${t.por_produto.map(p => `
+                        <tr>
+                            <td>${p.icone || ''} ${p.produto}</td>
+                            <td>${p.abastecimentos}</td>
+                            <td>${litros(p.litros)}</td>
+                            <td>${reais(p.valor_recebido)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <div class="por-posto">
+                ${t.por_posto.map(p => `
+                    <span class="chip">${p.posto}: ${litros(p.litros)} · ${reais(p.valor_recebido)}</span>
+                `).join('')}
+            </div>
+
+            <div class="linha-desconto">
+                Bruto ${reais(t.valor_bruto)} − desconto ${reais(t.desconto_concedido)} =
+                <strong>${reais(t.valor_recebido)}</strong>
+            </div>
+        </div>
+    `).join('');
+
+    const somaLitros = d.detalhes.reduce((s, r) => s + (r.quantidade || 0), 0);
+    const somaPago = d.detalhes.reduce((s, r) => s + (r.valor_final || 0), 0);
+    const somaDesc = d.detalhes.reduce((s, r) => s + (r.valor_desconto || 0), 0);
+
+    document.getElementById('tabela-detalhes').innerHTML = `
+        <table class="tabela">
+            <thead>
+                <tr><th>Hora</th><th>Posto</th><th>Combustível</th><th>Cliente</th>
+                    <th class="num">Litros</th><th class="num">Preço bomba</th>
+                    <th class="num">Desconto</th><th class="num">Valor cobrado</th></tr>
+            </thead>
+            <tbody>
+                ${d.detalhes.map(r => `
+                    <tr>
+                        <td><strong>${(r.hora || '').slice(0, 5)}</strong></td>
+                        <td>${r.posto || ''}</td>
+                        <td>${r.produto || ''}</td>
+                        <td>${r.cliente || ''}</td>
+                        <td class="num">${litros(r.quantidade)}</td>
+                        <td class="num">${reais(r.valor_original)}</td>
+                        <td class="num negativo">- ${reais(r.valor_desconto)}</td>
+                        <td class="num"><strong>${reais(r.valor_final)}</strong></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="4"><strong>Total do período</strong></td>
+                    <td class="num"><strong>${litros(somaLitros)}</strong></td>
+                    <td class="num"></td>
+                    <td class="num negativo"><strong>- ${reais(somaDesc)}</strong></td>
+                    <td class="num total-caixa"><strong>${reais(somaPago)}</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+    `;
+}
+
+// ===================== PREÇOS E DESCONTOS =====================
+async function carregarProdutosAdmin() {
+    const container = document.getElementById('produtos-admin');
+    container.innerHTML = '<p class="carregando">Carregando produtos...</p>';
+
+    try {
+        const d = await api('/admin/produtos');
+        produtosAdmin = d.produtos;
+        renderizarProdutosAdmin();
+    } catch (erro) {
+        container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+function renderizarProdutosAdmin() {
+    const grupos = {
+        combustivel: produtosAdmin.filter(p => p.tipo === 'combustivel'),
+        oleo: produtosAdmin.filter(p => p.tipo === 'oleo')
+    };
+
+    const ehMaster = sessao.nivel === 'master';
+
+    const linha = p => `
+        <div class="produto-linha" data-id="${p.id}"
+             data-custo="${p.preco_custo || 0}" data-margem="${p.margem_minima ?? 10}">
+            <div class="produto-titulo">
+                <span class="icone">${p.icone || ''}</span>
+                <input type="text" class="in-nome" value="${p.nome.replace(/"/g, '&quot;')}"
+                       title="Clique para renomear o produto" ${ehMaster ? '' : 'readonly'}>
+            </div>
+
+            <div class="campo campo-custo">
+                <label>Preço de custo ${ehMaster ? '' : '🔒'}</label>
+                <div class="input-prefixo">
+                    <span>R$</span>
+                    <input type="number" step="0.01" min="0" class="in-custo" value="${(p.preco_custo || 0).toFixed(2)}"
+                           oninput="recalcularLinha(${p.id})" ${ehMaster ? '' : 'readonly'}>
+                </div>
+            </div>
+
+            <div class="campo">
+                <label>Preço de bomba</label>
+                <div class="input-prefixo">
+                    <span>R$</span>
+                    <input type="number" step="0.01" min="0" class="in-preco" value="${(p.preco_atual || 0).toFixed(2)}"
+                           oninput="recalcularLinha(${p.id})">
+                </div>
+            </div>
+
+            <div class="campo">
+                <label>Desconto</label>
+                <div class="input-duplo">
+                    <input type="number" step="0.01" min="0" class="in-desconto" value="${(p.desconto_valor || 0).toFixed(2)}"
+                           oninput="recalcularLinha(${p.id})">
+                    <select class="in-tipo" onchange="recalcularLinha(${p.id})">
+                        <option value="fixo" ${p.desconto_tipo === 'fixo' ? 'selected' : ''}>R$ por ${p.unidade}</option>
+                        <option value="percentual" ${p.desconto_tipo === 'percentual' ? 'selected' : ''}>% do preço</option>
+                    </select>
+                </div>
+                <small class="dica-desconto" id="dica-${p.id}"></small>
+            </div>
+
+            <div class="campo">
+                <label>Limite (${p.unidade})</label>
+                <input type="number" step="1" min="0" class="in-limite" value="${p.limite_litros}">
+            </div>
+
+            ${ehMaster ? `
+            <div class="campo">
+                <label>Margem mín. (%)</label>
+                <input type="number" step="1" min="0" class="in-margem" value="${p.margem_minima ?? 10}"
+                       oninput="recalcularLinha(${p.id})" title="Piso que a Gerência precisa respeitar">
+            </div>` : ''}
+
+            <div class="campo resultado">
+                <label>Cliente paga</label>
+                <strong class="preco-final" id="final-${p.id}">${reais(p.preco_final)}</strong>
+                <span class="por-unidade">por ${p.unidade}</span>
+                <span class="margem-info" id="margem-${p.id}"></span>
+            </div>
+
+            <div class="campo campo-ativo">
+                <label class="switch">
+                    <input type="checkbox" class="in-ativo" ${p.ativo ? 'checked' : ''}>
+                    <span>Ativo</span>
+                </label>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('produtos-admin').innerHTML = `
+        <div class="card">
+            <h3>⛽ Combustíveis</h3>
+            ${grupos.combustivel.map(linha).join('')}
+        </div>
+        <div class="card">
+            <h3>🛢️ Óleos</h3>
+            ${grupos.oleo.map(linha).join('')}
+        </div>
+    `;
+
+    produtosAdmin.forEach(p => recalcularLinha(p.id));
+}
+
+// ===================== AUDITORIA =====================
+async function carregarAuditoria() {
+    const container = document.getElementById('lista-auditoria');
+    container.innerHTML = '<p class="carregando">Carregando histórico...</p>';
+
+    try {
+        const params = new URLSearchParams();
+        const ini = document.getElementById('audit-inicio').value;
+        const fim = document.getElementById('audit-fim').value;
+        const acao = document.getElementById('audit-acao').value;
+        if (ini) params.append('data_inicio', ini);
+        if (fim) params.append('data_fim', fim);
+        if (acao) params.append('acao', acao);
+
+        const d = await api(`/admin/auditoria?${params}`);
+
+        if (!d.registros.length) {
+            container.innerHTML = '<p class="vazio">Nenhuma alteração registrada neste período.</p>';
+            return;
+        }
+
+        container.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr><th>Quando</th><th>Quem</th><th>Produto</th><th>O que mudou</th>
+                        <th>De</th><th>Para</th><th>Situação</th></tr>
+                </thead>
+                <tbody>
+                    ${d.registros.map(r => `
+                        <tr class="${r.acao === 'BLOQUEIO' ? 'linha-bloqueio' : ''}">
+                            <td>${formatarDataHora(r.data_hora)}</td>
+                            <td>${r.usuario} <span class="badge badge-${r.nivel}">${rotuloNivel(r.nivel)}</span></td>
+                            <td>${r.produto || '-'}</td>
+                            <td>${r.campo_rotulo || '-'}</td>
+                            <td>${r.valor_anterior ?? '-'}</td>
+                            <td><strong>${r.valor_novo ?? '-'}</strong></td>
+                            <td>${r.acao === 'BLOQUEIO'
+                                ? `<span class="tag-bloqueio" title="${(r.detalhe || '').replace(/"/g, '&quot;')}">⛔ Bloqueado</span>`
+                                : '<span class="tag-ok">✅ Aplicado</span>'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            <p class="ajuda">Passe o mouse sobre "Bloqueado" para ver o motivo.</p>
+        `;
+    } catch (erro) {
+        container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+function formatarDataHora(dh) {
+    if (!dh) return '';
+    const [data, hora] = dh.split(' ');
+    return `${data.split('-').reverse().join('/')} ${(hora || '').slice(0, 5)}`;
+}
+
+function rotuloNivel(n) {
+    return n === 'master' ? 'Master' : n === 'gerencia' ? 'Gerência' : 'Caixa';
+}
+
+function recalcularLinha(id) {
+    const linha = document.querySelector(`.produto-linha[data-id="${id}"]`);
+    if (!linha) return;
+
+    const preco = parseFloat(linha.querySelector('.in-preco').value) || 0;
+    const desconto = parseFloat(linha.querySelector('.in-desconto').value) || 0;
+    const tipo = linha.querySelector('.in-tipo').value;
+    const custo = parseFloat(linha.querySelector('.in-custo')?.value ?? linha.dataset.custo) || 0;
+    const margemMin = parseFloat(linha.querySelector('.in-margem')?.value ?? linha.dataset.margem) || 0;
+
+    const porUnidade = tipo === 'percentual' ? preco * (desconto / 100) : desconto;
+    const final = Math.round((preco - porUnidade) * 100) / 100;
+
+    const el = document.getElementById(`final-${id}`);
+    el.textContent = reais(final);
+
+    const dica = document.getElementById(`dica-${id}`);
+    if (dica) {
+        dica.textContent = tipo === 'percentual' && desconto > 0
+            ? `= ${reais(porUnidade)} de desconto`
+            : '';
+    }
+
+    // ===== INDICADOR DE MARGEM =====
+    const info = document.getElementById(`margem-${id}`);
+    const ehMaster = sessao.nivel === 'master';
+    const piso = Math.round(custo * (1 + margemMin / 100) * 100) / 100;
+    let estado = 'ok';
+
+    if (final < 0) {
+        estado = 'bloqueado';
+        info.textContent = '⛔ preço negativo';
+    } else if (!custo) {
+        info.textContent = ehMaster ? 'informe o custo' : '⛔ custo não cadastrado';
+        estado = ehMaster ? 'neutro' : 'bloqueado';
+    } else if (final < custo) {
+        estado = 'bloqueado';
+        info.textContent = `⛔ abaixo do custo (prejuízo de ${reais(custo - final)})`;
+    } else if (!ehMaster && final < piso) {
+        estado = 'bloqueado';
+        info.textContent = `⛔ mínimo do seu nível: ${reais(piso)}`;
+    } else {
+        const lucro = final - custo;
+        const perc = (lucro / custo) * 100;
+        estado = (!ehMaster && final < piso * 1.02) || perc < margemMin ? 'alerta' : 'ok';
+        info.textContent = `margem ${reais(lucro)} (${perc.toFixed(1)}%)`;
+    }
+
+    el.classList.toggle('erro', estado === 'bloqueado');
+    info.className = `margem-info ${estado}`;
+    linha.classList.toggle('linha-bloqueada', estado === 'bloqueado');
+
+    atualizarBotaoSalvar();
+}
+
+function atualizarBotaoSalvar() {
+    const botao = document.getElementById('btn-salvar-produtos');
+    if (!botao) return;
+
+    const bloqueadas = document.querySelectorAll('.produto-linha.linha-bloqueada').length;
+    botao.disabled = bloqueadas > 0;
+    botao.textContent = bloqueadas > 0
+        ? `⛔ ${bloqueadas} produto(s) com margem inválida`
+        : '💾 Salvar alterações';
+}
+
+// Mostra a variação fora do normal e devolve true se o Master confirmar.
+// Existe porque o preço de custo é o número que sustenta todas as travas de
+// margem: um zero a menos aqui libera desconto que dá prejuízo lá na bomba.
+function confirmarVariacaoPrecos(lista) {
+    const linhas = lista.map(v => {
+        const seta = v.sentido === 'queda' ? '▼' : '▲';
+        return `${seta} ${v.produto} — ${v.campo}\n` +
+               `     de R$ ${v.de.toFixed(2)} para R$ ${v.para.toFixed(2)} ` +
+               `(${v.variacao_pct > 0 ? '+' : ''}${v.variacao_pct}%)`;
+    }).join('\n\n');
+
+    return confirm(
+        `⚠ VARIAÇÃO FORA DO NORMAL\n\n${linhas}\n\n` +
+        `Combustível não costuma variar tanto de um dia para o outro. ` +
+        `Confira se não faltou ou sobrou um zero.\n\n` +
+        `Os valores estão certos?`
+    );
+}
+
+async function salvarProdutos() {
+    const botao = document.getElementById('btn-salvar-produtos');
+    botao.disabled = true;
+    botao.textContent = 'Salvando...';
+
+    try {
+        const payload = [...document.querySelectorAll('.produto-linha')].map(linha => ({
+            id: parseInt(linha.dataset.id),
+            nome: linha.querySelector('.in-nome').value.trim(),
+            preco_atual: parseFloat(linha.querySelector('.in-preco').value) || 0,
+            ...(linha.querySelector('.in-custo') && !linha.querySelector('.in-custo').readOnly ? {
+                preco_custo: parseFloat(linha.querySelector('.in-custo').value) || 0
+            } : {}),
+            ...(linha.querySelector('.in-margem') ? {
+                margem_minima: parseFloat(linha.querySelector('.in-margem').value) || 0
+            } : {}),
+            desconto_valor: parseFloat(linha.querySelector('.in-desconto').value) || 0,
+            desconto_tipo: linha.querySelector('.in-tipo').value,
+            limite_litros: parseFloat(linha.querySelector('.in-limite').value) || 0,
+            ativo: linha.querySelector('.in-ativo').checked ? 1 : 0
+        }));
+
+        let d;
+        try {
+            d = await api('/admin/produtos/atualizar', {
+                method: 'POST',
+                body: JSON.stringify({ produtos: payload })
+            });
+        } catch (falha) {
+            // Variação fora do normal: o servidor não gravou nada e devolveu a
+            // lista para o Master conferir. É o caso do zero a menos no custo.
+            if (falha.status === 409 && falha.dados && falha.dados.confirmar) {
+                if (!confirmarVariacaoPrecos(falha.dados.confirmar)) {
+                    aviso('Nada foi salvo. Confira os valores e tente de novo.', 'erro');
+                    return;
+                }
+                // Reenvia marcando só os produtos que o Master acabou de confirmar
+                const idsConfirmados = new Set(falha.dados.confirmar.map(x => x.produto_id));
+                payload.forEach(p => {
+                    if (idsConfirmados.has(p.id)) p.confirma_variacao = true;
+                });
+                d = await api('/admin/produtos/atualizar', {
+                    method: 'POST',
+                    body: JSON.stringify({ produtos: payload })
+                });
+            } else {
+                throw falha;
+            }
+        }
+
+        aviso(`✅ ${d.mensagem}`);
+        carregarProdutosAdmin();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    } finally {
+        botao.disabled = false;
+        botao.textContent = '💾 Salvar alterações';
+    }
+}
+
+// ===================== USUÁRIOS =====================
+async function carregarUsuarios() {
+    const container = document.getElementById('lista-usuarios');
+    container.innerHTML = '<p class="carregando">Carregando...</p>';
+
+    try {
+        const d = await api('/admin/usuarios');
+
+        // Usuários criados antes do e-mail existir. Enquanto estiverem sem
+        // e-mail, o "esqueci minha senha" deles não tem para onde mandar nada.
+        const semEmail = d.usuarios.filter(u => !u.email).length;
+
+        let alertas = '';
+        if (d.email_configurado === false) {
+            alertas += `
+                <div class="aviso-setup" style="background:#fee2e2;border-color:#fca5a5;">
+                    <strong>⚠️ O envio de e-mail não está configurado no servidor.</strong>
+                    <p>Enquanto não estiver, o "Esqueci minha senha" não envia nada —
+                    nem para a equipe, nem para os motoristas. Falta a variável
+                    <code>RESEND_API_KEY</code> no Render.</p>
+                </div>`;
+        }
+        if (semEmail > 0) {
+            alertas += `
+                <div class="aviso-setup">
+                    <strong>⚠️ ${semEmail} usuário(s) sem e-mail cadastrado.</strong>
+                    <p>Quem está sem e-mail não consegue recuperar a própria senha —
+                    só você, por aqui. Preencha no botão ✉️ de cada linha.</p>
+                </div>`;
+        }
+
+        container.innerHTML = alertas + `
+            <table class="tabela">
+                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
+                <tbody>
+                    ${d.usuarios.map(u => `
+                        <tr>
+                            <td><strong>${u.usuario}</strong></td>
+                            <td>${u.nome}</td>
+                            <td>${u.email
+                                ? u.email
+                                : '<span style="color:#b45309;">⚠️ sem e-mail</span>'}</td>
+                            <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
+                            <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
+                            <td>
+                                <button class="btn-mini" onclick="definirEmailUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', '${String(u.email || '').replace(/'/g, "\\'")}')">
+                                    ✉️ ${u.email ? 'Trocar e-mail' : 'Cadastrar e-mail'}
+                                </button>
+                                <button class="btn-mini" onclick="redefinirSenhaUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}')">
+                                    🔑 Redefinir senha
+                                </button>
+                                <button class="btn-mini" onclick="alternarUsuario(${u.id}, ${u.ativo ? 0 : 1})">
+                                    ${u.ativo ? 'Desativar' : 'Reativar'}
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (erro) {
+        container.innerHTML = `<p class="msg-erro">${erro.message}</p>`;
+    }
+}
+
+// Preenche o e-mail de quem foi criado antes desta mudança — sem precisar
+// desativar e recriar o usuário, o que perderia o histórico de auditoria.
+async function definirEmailUsuario(usuarioId, nomeUsuario, emailAtual) {
+    const email = prompt(
+        `E-mail de "${nomeUsuario}":\n\n` +
+        `É para onde vai o link quando ele esquecer a senha. ` +
+        `Precisa ser um e-mail que só ele acessa.`,
+        emailAtual || '');
+
+    if (email === null) return;
+    if (!email.trim()) {
+        aviso('O e-mail não pode ficar em branco.', 'erro');
+        return;
+    }
+
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ email: email.trim() })
+        });
+        aviso(`✅ E-mail de ${nomeUsuario} salvo.`);
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    }
+}
+
+// Sem isto, funcionário que esquece a senha fica trancado para sempre: a tela
+// de "trocar senha" só troca a do próprio usuário logado, e não havia como o
+// Master resolver — só desativar e criar outro.
+async function redefinirSenhaUsuario(usuarioId, nomeUsuario) {
+    const nova = prompt(
+        `Nova senha para "${nomeUsuario}":\n\n` +
+        `Mínimo 8 caracteres. Anote e entregue a ele — ninguém consegue ver a senha depois.`);
+
+    if (nova === null) return;
+    if (nova.trim().length < 8) {
+        aviso('A senha precisa ter ao menos 8 caracteres.', 'erro');
+        return;
+    }
+
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ senha_nova: nova.trim() })
+        });
+        aviso(`Senha de ${nomeUsuario} redefinida. Ele precisa entrar de novo com a senha nova.`);
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    }
+}
+
+async function criarUsuario(evento) {
+    evento.preventDefault();
+
+    try {
+        const d = await api('/admin/usuarios', {
+            method: 'POST',
+            body: JSON.stringify({
+                nome: document.getElementById('novo-nome').value.trim(),
+                usuario: document.getElementById('novo-usuario').value.trim(),
+                email: document.getElementById('novo-email').value.trim(),
+                senha: document.getElementById('nova-senha').value,
+                nivel: document.getElementById('novo-nivel').value
+            })
+        });
+
+        aviso(`✅ ${d.mensagem}`);
+        document.getElementById('form-usuario').reset();
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    }
+
+    return false;
+}
+
+async function alternarUsuario(id, ativo) {
+    try {
+        const d = await api(`/admin/usuarios/${id}`, {
+            method: 'POST',
+            body: JSON.stringify({ ativo })
+        });
+        aviso(`✅ ${d.mensagem}`);
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    }
+}
+
+async function trocarSenha(evento) {
+    evento.preventDefault();
+
+    try {
+        const d = await api('/admin/senha', {
+            method: 'POST',
+            body: JSON.stringify({
+                senha_atual: document.getElementById('senha-atual').value,
+                senha_nova: document.getElementById('senha-nova').value
+            })
+        });
+
+        alert(d.mensagem);
+        sair();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+    }
+
+    return false;
+}
+
+// ===================== PADRÕES SUSPEITOS =====================
+//
+// A foto do comprovante trava quem se declara motorista sem ser. O que ela
+// não pega é a fraude de dentro: frentista que cadastra amigos e libera
+// desconto para eles. Isso nunca aparece num abastecimento isolado — só no
+// padrão ao longo dos dias. Daí esta tela.
+//
+// Tudo aqui é indício, não prova. O texto foi escrito para lembrar disso,
+// porque acusar um funcionário por engano custa mais caro que o desconto.
+
+function escapar(texto) {
+    const d = document.createElement('div');
+    d.textContent = texto == null ? '' : String(texto);
+    return d.innerHTML;
+}
+
+function placaBonita(p) {
+    return (!p || p.length !== 7) ? (p || '—') : `${p.slice(0, 3)} ${p.slice(3)}`;
+}
+
+async function carregarSuspeitas() {
+    const dias = document.getElementById('suspeitas-dias').value;
+    const alvo = document.getElementById('suspeitas-conteudo');
+    const resumo = document.getElementById('suspeitas-resumo');
+
+    alvo.innerHTML = '<p class="carregando">Analisando...</p>';
+    resumo.innerHTML = '';
+
+    try {
+        const d = await api(`/admin/suspeitas?dias=${dias}`);
+
+        resumo.className = 'resumo-suspeitas ' + (d.total_alertas ? 'com-alerta' : 'limpo');
+        resumo.innerHTML = d.total_alertas
+            ? `<strong>${d.total_alertas} ponto(s)</strong> merecem uma olhada nos últimos ${d.periodo_dias} dias.`
+            : `Nenhum padrão fora do comum nos últimos ${d.periodo_dias} dias.`;
+
+        alvo.innerHTML =
+            blocoPlacasRepetidas(d.placas_repetidas) +
+            blocoMesmoFrentista(d.sempre_mesmo_frentista) +
+            blocoRajada(d.cadastros_em_rajada) +
+            blocoTrocasPlaca(d.trocas_de_placa) +
+            blocoBeneficiados(d.maiores_beneficiados);
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro visivel">${escapar(e.message)}</p>`;
+    }
+}
+
+function caixaSuspeita(titulo, explicacao, corpo, vazio) {
+    if (!corpo) {
+        return `<div class="caixa-suspeita vazia">
+            <h3>${titulo}</h3><p class="ajuda">${vazio}</p></div>`;
+    }
+    return `<div class="caixa-suspeita">
+        <h3>${titulo}</h3>
+        <p class="ajuda">${explicacao}</p>
+        ${corpo}
+    </div>`;
+}
+
+function blocoPlacasRepetidas(lista) {
+    const corpo = (lista || []).map(p => `
+        <div class="item-suspeita">
+            <div class="placa-item">${placaBonita(p.placa)}</div>
+            <div class="detalhe-item">
+                <strong>${p.quantidade} cadastros</strong> usam esta placa
+                <ul>${p.clientes.map(c => `
+                    <li>
+                        ${escapar(c.nome)} — ${escapar(c.ocupacao || '')}
+                        <span class="cinza">(cadastrado em ${escapar(c.cadastrado_em)})</span>
+                        <button class="link-comprovante" onclick="verComprovante(${c.id})">ver comprovante</button>
+                    </li>`).join('')}
+                </ul>
+            </div>
+        </div>`).join('');
+
+    return caixaSuspeita(
+        '🚗 Mesma placa em vários cadastros',
+        'Táxi dividido por turno é normal e aparece aqui também. O que chama atenção ' +
+        'é a mesma placa em três ou mais contas, ou em contas criadas no mesmo dia.',
+        corpo,
+        'Nenhuma placa repetida.'
+    );
+}
+
+function blocoMesmoFrentista(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr>
+                <th>Motorista</th><th>Placa</th><th>Abastecimentos</th><th>Sempre com</th>
+            </tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.cliente_nome)}</td>
+                    <td class="mono">${placaBonita(l.placa)}</td>
+                    <td>${l.abastecimentos}</td>
+                    <td><strong>${escapar(l.frentista)}</strong></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '👥 Motorista que só abastece com um frentista',
+        'Quem abastece de verdade cai em turnos diferentes ao longo do mês. ' +
+        'Cinco ou mais abastecimentos sempre com a mesma pessoa é o padrão de um combinado — ' +
+        'mas também pode ser só rotina de horário. Vale conversar antes de concluir.',
+        corpo,
+        'Ninguém abastecendo sempre com o mesmo frentista.'
+    );
+}
+
+function blocoRajada(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr><th>Dia</th><th>Cadastros criados</th></tr></thead>
+            <tbody>${lista.map(l => `
+                <tr><td>${escapar(l.dia)}</td><td>${l.quantidade}</td></tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '📋 Cadastros em rajada',
+        'Vários cadastros no mesmo dia pode ser divulgação que deu certo — ou um mutirão ' +
+        'de amigos. Cruze com o dia em que você fez alguma ação de divulgação.',
+        corpo,
+        'Nenhum dia com volume fora do normal.'
+    );
+}
+
+function blocoTrocasPlaca(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr><th>Quando</th><th>Cliente</th><th>De</th><th>Para</th></tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.quando)}</td>
+                    <td>${escapar(l.cliente)}</td>
+                    <td class="mono">${placaBonita(l.de)}</td>
+                    <td class="mono">${placaBonita(l.para)}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '🔁 Trocas de placa',
+        'Motorista de aplicativo troca de carro e é esperado que troque a placa. ' +
+        'O que destoa é trocar toda semana, ou trocar minutos antes de abastecer.',
+        corpo,
+        'Nenhuma troca de placa no período.'
+    );
+}
+
+function blocoBeneficiados(lista) {
+    const corpo = (lista || []).length ? `
+        <table class="tabela">
+            <thead><tr>
+                <th>Motorista</th><th>Placa</th><th>Categoria</th>
+                <th>Dias</th><th>Litros</th><th>Desconto total</th>
+            </tr></thead>
+            <tbody>${lista.map(l => `
+                <tr>
+                    <td>${escapar(l.cliente_nome)}
+                        <button class="link-comprovante" onclick="verComprovante(${l.cliente_id})">comprovante</button>
+                    </td>
+                    <td class="mono">${placaBonita(l.placa)}</td>
+                    <td>${escapar(l.ocupacao || '')}</td>
+                    <td>${l.dias_com_abastecimento}</td>
+                    <td>${l.litros.toFixed(2).replace('.', ',')}</td>
+                    <td><strong>R$ ${l.desconto_total.toFixed(2).replace('.', ',')}</strong></td>
+                </tr>`).join('')}
+            </tbody>
+        </table>` : '';
+
+    return caixaSuspeita(
+        '💰 Quem mais recebeu desconto',
+        'Não é alerta — é o custo do programa por pessoa. Taxista que roda todo dia ' +
+        'aparece no topo com razão. Estranho é quem aparece no topo com poucos dias rodados.',
+        corpo,
+        'Sem abastecimentos no período.'
+    );
+}
+
+// ===================== COMPROVANTE DO CADASTRO =====================
+
+async function verComprovante(clienteId) {
+    const janela = document.getElementById('janela-comprovante');
+    const alvo = document.getElementById('comprovante-conteudo');
+
+    alvo.innerHTML = '<p class="carregando">Carregando...</p>';
+    janela.hidden = false;
+
+    try {
+        const d = await api(`/admin/cliente/${clienteId}/comprovante`);
+
+        const rotulos = {
+            licenca_taxi: 'Licença de taxista',
+            perfil_app: 'Perfil no aplicativo de motorista',
+            convenio: 'Comprovante de vínculo com a empresa'
+        };
+
+        alvo.innerHTML = `
+            <h3>${escapar(d.nome)}</h3>
+            <p class="ajuda">
+                ${escapar(d.ocupacao || '')} ·
+                placa <span class="mono">${placaBonita(d.placa)}</span>
+                ${d.empresa_convenio ? ' · ' + escapar(d.empresa_convenio) : ''}
+                ${d.registro_numero ? ' · registro ' + escapar(d.registro_numero) : ''}
+            </p>
+            <p class="tipo-comprovante">
+                ${escapar(rotulos[d.tipo_comprovante] || 'Comprovante')}
+                ${d.enviado_em ? '<span class="cinza"> — enviado em ' + escapar(String(d.enviado_em).slice(0, 10)) + '</span>' : ''}
+            </p>
+            ${d.imagem
+                ? `<img src="${d.imagem}" alt="Comprovante" class="imagem-comprovante">`
+                : '<p class="msg-erro visivel">Este cadastro não tem comprovante — foi feito antes desta exigência.</p>'}`;
+    } catch (e) {
+        alvo.innerHTML = `<p class="msg-erro visivel">${escapar(e.message)}</p>`;
+    }
+}
+
+function fecharComprovante(evento) {
+    if (evento && evento.target !== evento.currentTarget) return;
+    document.getElementById('janela-comprovante').hidden = true;
+    document.getElementById('comprovante-conteudo').innerHTML = '';
+}
