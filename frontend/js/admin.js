@@ -1227,7 +1227,7 @@ async function carregarFrentistasAdmin() {
             <table class="tabela">
                 <thead>
                     <tr>
-                        <th>Nome</th><th>CPF</th><th>Placa</th>
+                        <th>Nome</th><th>CPF</th><th>Placa</th><th>E-mail de login</th>
                         <th>Cupom da semana</th><th>Próximo em</th><th></th>
                     </tr>
                 </thead>
@@ -1237,6 +1237,7 @@ async function carregarFrentistasAdmin() {
                             <td>${escapar(f.nome)}</td>
                             <td>${escapar(f.cpf)}</td>
                             <td>${escapar(f.placa || '—')}</td>
+                            <td>${escapar(f.email || '—')}</td>
                             <td>${rotuloCupom[f.cupom_semana] || escapar(f.cupom_semana)}</td>
                             <td>${f.proximo_cupom_em ? escapar(f.proximo_cupom_em) : '—'}</td>
                             <td><button class="btn btn-secundario"
@@ -1245,7 +1246,13 @@ async function carregarFrentistasAdmin() {
                             </button></td>
                         </tr>`).join('')}
                 </tbody>
-            </table>`;
+            </table>
+            <p style="font-size:0.85em; color:#666; margin-top:8px;">
+                💡 O e-mail de login de cada frentista aparece aqui. Repasse esse e-mail exato
+                para ele — a senha é a que você cadastrou. Se ele esqueceu a senha, use
+                "Esqueci minha senha" no app com esse mesmo e-mail: como todos caem na mesma
+                caixa postocajardins@gmail.com, você recebe o link de redefinição normalmente.
+            </p>`;
         preencherPadroesFrentista(d.frentistas.length);
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
