@@ -951,6 +951,7 @@ async function carregarEmpresas() {
                         </tr>`).join('')}
                 </tbody>
             </table>`;
+        preencherPadroesFrentista(d.frentistas.length);
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
@@ -1194,12 +1195,28 @@ async function reverterFrentista(id, nome) {
     }
 }
 
+// Telefone e e-mail padrão do cadastro de frentista, para quando o Edmundo
+// ainda não tem os dados individuais de cada um na mão. O telefone pode
+// repetir sem problema (não é único no sistema); o e-mail PRECISA ser único
+// (trava antifraude), então cada frentista ganha um sufixo "+N" diferente —
+// truque do próprio Gmail: todos caem na mesma caixa postocajardins@gmail.com.
+// Edmundo troca por dados reais quando tiver, editando o cadastro depois.
+function preencherPadroesFrentista(quantidadeAtual) {
+    const tel = document.getElementById('frentista-tel');
+    const email = document.getElementById('frentista-email');
+    if (tel && !tel.value) tel.value = '1130611778';
+    if (email && !email.value) {
+        email.value = `postocajardins+${quantidadeAtual + 1}@gmail.com`;
+    }
+}
+
 async function carregarFrentistasAdmin() {
     const alvo = document.getElementById('frentistas-lista');
     try {
         const d = await api('/admin/frentistas');
         if (!d.frentistas || !d.frentistas.length) {
             alvo.innerHTML = '<p class="vazio">Nenhum frentista cadastrado ainda.</p>';
+            preencherPadroesFrentista(0);
             return;
         }
         const rotuloCupom = {
