@@ -1558,11 +1558,15 @@ def gerar_cupom():
                 cupom_a_cancelar = None
                 liberacao_usada = None
 
-        # Desconto do produto; se ainda não configurado, cai no desconto do cliente
-        desconto_valor = produto['desconto_valor'] or 0
+        # Desconto do produto; só cai no desconto do cliente se o produto nunca
+        # foi configurado (None). Um valor explícito de zero significa "este
+        # produto não tem desconto" e vale como está — antes, `<= 0` tratava
+        # zero como "não configurado" e reintroduzia o desconto do cliente
+        # escondido, então nenhum produto conseguia ter desconto zero de verdade.
+        desconto_valor = produto['desconto_valor']
         desconto_tipo = produto['desconto_tipo'] or 'fixo'
 
-        if desconto_valor <= 0:
+        if desconto_valor is None:
             desconto_valor = cliente['desconto_valor'] or 0
             desconto_tipo = cliente['desconto_tipo'] or 'fixo'
 
@@ -2011,10 +2015,14 @@ def usar_cupom():
             valor_sem_desconto = round(preco_congelado * quantidade_agora, 2)
 
         # Desconto: usa o valor CONGELADO no cupom (preço/desconto do momento da geração).
-        # Se o cupom é antigo e não tem esse dado, cai no desconto do cliente.
-        desconto_unitario = cupom['desconto_unitario'] or 0
+        # Só cai no desconto do cliente se o cupom for antigo e realmente não
+        # tiver esse dado (None) — um cupom com desconto congelado em zero
+        # (produto sem desconto de propósito) precisa continuar em zero aqui,
+        # senão a baixa na bomba reintroduz escondido o desconto do cliente que
+        # o próprio cupom já tinha descartado ao nascer.
+        desconto_unitario = cupom['desconto_unitario']
 
-        if desconto_unitario > 0:
+        if desconto_unitario is not None:
             valor_desconto = desconto_unitario * quantidade_agora
         elif (cupom['desconto_tipo'] or cliente['desconto_tipo']) == 'percentual':
             perc = cupom['desconto_valor'] or cliente['desconto_valor'] or 0
@@ -2621,7 +2629,7 @@ def admin_listar_produtos():
                 'preco_custo': round(custo, 2),
                 'margem_minima': margem_min,
                 'preco_atual': round(preco, 2),
-                'desconto_valor': desconto,
+                'desconto_valor': round(desconto, 2),
                 'desconto_tipo': p['desconto_tipo'] or 'fixo',
                 'desconto_por_unidade': round(por_unidade, 2),
                 'preco_final': round(preco_final, 2),
