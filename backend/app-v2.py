@@ -3070,10 +3070,16 @@ def atualizar_descontos():
         # preços. Sem isto, um 5,00 digitado no lugar de 1,00 saía vendendo
         # abaixo do custo para todos os motoristas daquela ocupação de uma vez,
         # sem nada reclamar em lugar nenhum.
+        # "Não tem desconto próprio" é só desconto_valor NULO — um produto com
+        # desconto explícito em zero (ex: Gasolina Premium) tem desconto
+        # próprio de propósito e não herda mais o da ocupação (ver correção de
+        # 24/08: zero configurado passou a valer como zero de verdade). Antes,
+        # o `<= 0` aqui tratava esse zero como "sem desconto próprio" também,
+        # e o validava contra uma herança que na prática já não acontece mais.
         cursor.execute('''
             SELECT nome, preco_atual, preco_custo
             FROM produtos
-            WHERE ativo = 1 AND (desconto_valor IS NULL OR desconto_valor <= 0)
+            WHERE ativo = 1 AND desconto_valor IS NULL
         ''')
         impedimentos = []
         for prod in cursor.fetchall():
