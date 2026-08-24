@@ -1488,7 +1488,7 @@ function renderizarProdutosAdmin() {
                 <label>Preço de custo ${ehMaster ? '' : '🔒'}</label>
                 <div class="input-prefixo">
                     <span>R$</span>
-                    <input type="number" step="0.01" min="0" class="in-custo" value="${p.preco_custo || 0}"
+                    <input type="number" step="0.01" min="0" class="in-custo" value="${(p.preco_custo || 0).toFixed(2)}"
                            oninput="recalcularLinha(${p.id})" ${ehMaster ? '' : 'readonly'}>
                 </div>
             </div>
@@ -1497,7 +1497,7 @@ function renderizarProdutosAdmin() {
                 <label>Preço de bomba</label>
                 <div class="input-prefixo">
                     <span>R$</span>
-                    <input type="number" step="0.01" min="0" class="in-preco" value="${p.preco_atual}"
+                    <input type="number" step="0.01" min="0" class="in-preco" value="${(p.preco_atual || 0).toFixed(2)}"
                            oninput="recalcularLinha(${p.id})">
                 </div>
             </div>
@@ -1505,7 +1505,7 @@ function renderizarProdutosAdmin() {
             <div class="campo">
                 <label>Desconto</label>
                 <div class="input-duplo">
-                    <input type="number" step="0.01" min="0" class="in-desconto" value="${p.desconto_valor}"
+                    <input type="number" step="0.01" min="0" class="in-desconto" value="${(p.desconto_valor || 0).toFixed(2)}"
                            oninput="recalcularLinha(${p.id})">
                     <select class="in-tipo" onchange="recalcularLinha(${p.id})">
                         <option value="fixo" ${p.desconto_tipo === 'fixo' ? 'selected' : ''}>R$ por ${p.unidade}</option>
