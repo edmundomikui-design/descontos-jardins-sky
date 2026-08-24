@@ -951,7 +951,6 @@ async function carregarEmpresas() {
                         </tr>`).join('')}
                 </tbody>
             </table>`;
-        preencherPadroesFrentista(d.frentistas.length);
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
@@ -1247,6 +1246,7 @@ async function carregarFrentistasAdmin() {
                         </tr>`).join('')}
                 </tbody>
             </table>`;
+        preencherPadroesFrentista(d.frentistas.length);
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
