@@ -262,6 +262,7 @@ function trocarAba(nome) {
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
     if (nome === 'indicacoes') carregarIndicacoesAdmin();
+    if (nome === 'clientes') carregarClientesAdmin(1);
     if (nome === 'frentistas') carregarFrentistasAdmin();
     if (nome === 'liberacoes') carregarLiberacoes();
     if (nome === 'cupons') abrirCuponsDoDia();
@@ -343,7 +344,13 @@ async function buscarClientes(evento) {
                             ${c.empresa_convenio ? '· ' + escaparHtml(c.empresa_convenio) : ''}
                         </span>
                     </div>
+                    <button class="btn-mini" style="background:#eee;color:#333;height:fit-content;"
+                            onclick="toggleEditarCliente(${c.id})">
+                        ✏️ Editar cadastro
+                    </button>
                 </div>
+
+                <div id="editar-${c.id}" style="display:none;"></div>
 
                 <div style="margin:12px 0;font-size:14px;line-height:1.9;">
                     ${linhaConsumo('Combustível hoje', comb, fmt(comb.data))}<br>
@@ -378,6 +385,95 @@ async function buscarClientes(evento) {
         alvo.innerHTML = `<p class="msg-erro">${e.message}</p>`;
     }
     return false;
+}
+
+// ===================== EDITAR CADASTRO (correção de erro do cliente, só Master) =====================
+//
+// O cliente se cadastra sozinho, sem ninguém conferindo em tempo real. Se ele
+// errar o e-mail, o CPF, o telefone ou qualquer outro dado, ninguém tinha
+// como corrigir — o cadastro ficava errado para sempre. Aqui o Master abre o
+// cadastro completo (sem máscara) e corrige só o que precisar.
+
+// Depois de salvar uma correção, cada tela sabe como se atualizar (a busca
+// avulsa refaz a busca; a listagem completa recarrega a página atual). Fica
+// registrado aqui, por cliente, na hora de abrir o formulário.
+const _refrescarAposEdicaoCliente = {};
+
+async function toggleEditarCliente(clienteId, trId = null, refrescar = null) {
+    const painel = document.getElementById(`editar-${clienteId}`);
+    if (!painel) return;
+    const linha = trId ? document.getElementById(trId) : null;
+
+    _refrescarAposEdicaoCliente[clienteId] = refrescar;
+
+    const abrindo = painel.style.display === 'none';
+    painel.style.display = abrindo ? 'block' : 'none';
+    if (linha) linha.style.display = abrindo ? 'table-row' : 'none';
+    if (!abrindo || painel.dataset.carregado) return;
+
+    painel.innerHTML = '<p class="carregando">Carregando cadastro...</p>';
+    try {
+        const d = await api(`/admin/clientes/${clienteId}`);
+        const c = d.cliente;
+
+        const campo = (rotulo, id, valor, opcoes = '') => `
+            <label style="font-size:13px;font-weight:600;">${rotulo}</label>
+            <input type="text" id="${id}" value="${escaparHtml(valor || '')}" ${opcoes}
+                   style="width:100%;padding:10px;margin:4px 0 10px;font-size:14px;
+                          border:1.5px solid #d1d5db;border-radius:6px;">`;
+
+        painel.innerHTML = `
+            <div style="border-top:1px solid #eee;margin-top:12px;padding-top:12px;
+                        background:#fafafa;padding:12px;border-radius:8px;">
+                <p class="ajuda" style="margin-top:0;">
+                    Corrija só o que estiver errado — os outros campos ficam como estão.
+                </p>
+                ${campo('Nome', `ed-nome-${clienteId}`, c.nome)}
+                ${campo('CPF (só números)', `ed-cpf-${clienteId}`, c.cpf, 'maxlength="11"')}
+                ${campo('E-mail', `ed-email-${clienteId}`, c.email)}
+                ${campo('Telefone', `ed-tel-${clienteId}`, c.tel)}
+                ${campo('Endereço', `ed-endereco-${clienteId}`, c.endereco)}
+                ${campo('Placa', `ed-placa-${clienteId}`, c.placa, 'maxlength="7"')}
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                    <button class="btn-mini" onclick="salvarEdicaoCliente(${clienteId})">
+                        💾 Salvar correção
+                    </button>
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            onclick="toggleEditarCliente(${clienteId}, ${trId ? `'${trId}'` : null})">
+                        Cancelar
+                    </button>
+                </div>
+            </div>`;
+        painel.dataset.carregado = '1';
+    } catch (e) {
+        painel.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+}
+
+async function salvarEdicaoCliente(clienteId) {
+    const pegar = campo => (document.getElementById(`ed-${campo}-${clienteId}`)?.value || '').trim();
+    const dados = {
+        nome: pegar('nome'),
+        cpf: pegar('cpf').replace(/\D/g, ''),
+        email: pegar('email'),
+        tel: pegar('tel'),
+        endereco: pegar('endereco'),
+        placa: pegar('placa'),
+    };
+
+    try {
+        const d = await api(`/admin/clientes/${clienteId}`, {
+            method: 'PUT',
+            body: JSON.stringify(dados)
+        });
+        aviso(`✅ ${d.mensagem}`);
+        const refrescar = _refrescarAposEdicaoCliente[clienteId];
+        if (refrescar) { refrescar(); return; }
+        // Recarrega a busca para a ficha já mostrar os dados corrigidos.
+        document.getElementById('busca-cliente')?.form?.requestSubmit();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
 }
 
 async function liberarExtra(clienteId, categoria) {
@@ -1254,6 +1350,95 @@ async function carregarFrentistasAdmin() {
                 caixa postocajardins@gmail.com, você recebe o link de redefinição normalmente.
             </p>`;
         preencherPadroesFrentista(d.frentistas.length);
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+// ===================== LISTAGEM DE CLIENTES (todos, com contagem, só Master) =====================
+//
+// Antes só existia a busca (mínimo 3 caracteres). Sem digitar nada, não dava
+// pra ver quantos clientes existem nem os nomes de todos. Esta aba lista
+// todo mundo, paginado, com o total no topo, e abre o mesmo formulário de
+// correção usado na busca avulsa (ver seção 39 das dores do projeto).
+
+let _clientesAdminPagina = 1;
+
+async function carregarClientesAdmin(pagina) {
+    if (typeof pagina === 'number') _clientesAdminPagina = pagina;
+    const alvo = document.getElementById('clientes-lista');
+    const resumo = document.getElementById('clientes-resumo');
+    if (!alvo) return;
+
+    const termo = (document.getElementById('clientes-busca')?.value || '').trim();
+    const status = document.getElementById('clientes-status')?.value || '';
+
+    alvo.innerHTML = '<p class="carregando">Carregando...</p>';
+    try {
+        const params = new URLSearchParams({
+            pagina: String(_clientesAdminPagina),
+            por_pagina: '50',
+        });
+        if (termo) params.append('q', termo);
+        if (status) params.append('status', status);
+
+        const d = await api(`/admin/clientes?${params.toString()}`);
+
+        if (resumo) {
+            resumo.textContent = d.total === 0
+                ? 'Nenhum cliente encontrado.'
+                : `${d.total} cliente${d.total === 1 ? '' : 's'} no total` +
+                  (d.total_paginas > 1 ? ` — página ${d.pagina} de ${d.total_paginas}` : '');
+        }
+
+        if (!d.clientes.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum cliente encontrado com esse filtro.</p>';
+            return;
+        }
+
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Nome</th><th>CPF</th><th>E-mail</th><th>Telefone</th>
+                        <th>Placa</th><th>Ocupação</th><th>Status</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.clientes.map(c => `
+                        <tr>
+                            <td>${escapar(c.nome)}</td>
+                            <td>${escapar(c.cpf)}</td>
+                            <td>${escapar(c.email)}</td>
+                            <td>${escapar(c.tel || '—')}</td>
+                            <td>${escapar(c.placa || '—')}</td>
+                            <td>${escapar(c.ocupacao || '—')}
+                                ${c.tipo_cliente === 'frentista' ? ' (frentista)' : ''}</td>
+                            <td>${c.status === 'ativo'
+                                    ? '✅ Ativo'
+                                    : `<span style="color:#c62828;">${escapar(c.status)}</span>`}</td>
+                            <td>
+                                <button class="btn-mini" style="background:#eee;color:#333;"
+                                        onclick="toggleEditarCliente(${c.id}, 'editar-tr-${c.id}', carregarClientesAdmin)">
+                                    ✏️ Editar
+                                </button>
+                            </td>
+                        </tr>
+                        <tr id="editar-tr-${c.id}" style="display:none;">
+                            <td colspan="8"><div id="editar-${c.id}" style="display:none;"></div></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            ${d.total_paginas > 1 ? `
+                <div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            ${d.pagina <= 1 ? 'disabled' : ''}
+                            onclick="carregarClientesAdmin(${d.pagina - 1})">← Anterior</button>
+                    <span class="ajuda">Página ${d.pagina} de ${d.total_paginas}</span>
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            ${d.pagina >= d.total_paginas ? 'disabled' : ''}
+                            onclick="carregarClientesAdmin(${d.pagina + 1})">Próxima →</button>
+                </div>` : ''}`;
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
