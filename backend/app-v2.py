@@ -64,7 +64,7 @@ app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
+        "methods": ["GET", "POST", "PUT", "OPTIONS"],
         "allow_headers": ["Content-Type", "X-Admin-Token"]
     }
 })
