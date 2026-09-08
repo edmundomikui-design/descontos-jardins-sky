@@ -4405,6 +4405,94 @@ def admin_listar_fechamentos():
         return jsonify({'erro': str(e)}), 500
 
 
+# ==================== LISTAGEM DE CLIENTES (SÓ MASTER) ====================
+#
+# Antes só existia a busca (mínimo 3 caracteres) — sem digitar nada, o Master
+# não tinha como ver quantos clientes existem nem os nomes de todos. Esta
+# rota devolve a lista completa, paginada, ordenada por nome, com o total —
+# é o ponto de partida para abrir qualquer cadastro e editar (ver seção 39
+# das dores do projeto).
+
+@app.route('/api/admin/clientes', methods=['GET'])
+@exige_master
+def admin_listar_clientes():
+    """Lista todos os clientes, paginada, com busca e filtro de status opcionais."""
+    try:
+        try:
+            pagina = max(1, int(request.args.get('pagina', 1)))
+        except ValueError:
+            pagina = 1
+        try:
+            por_pagina = int(request.args.get('por_pagina', 50))
+        except ValueError:
+            por_pagina = 50
+        por_pagina = max(1, min(por_pagina, 200))
+
+        status = (request.args.get('status') or '').strip().lower() or None
+        termo = (request.args.get('q') or '').strip()
+
+        condicoes = []
+        parametros = []
+
+        if status:
+            condicoes.append('LOWER(COALESCE(status, \'ativo\')) = ?')
+            parametros.append(status)
+
+        if termo:
+            so_numeros = re.sub(r'\D', '', termo)
+            like = f'%{termo.lower()}%'
+            condicoes.append('''(LOWER(nome) LIKE ?
+                                  OR LOWER(placa) LIKE ?
+                                  OR LOWER(email) LIKE ?
+                                  OR (? <> '' AND cpf LIKE ?))''')
+            parametros.extend([like, like, like, so_numeros, f'%{so_numeros}%'])
+
+        onde = f"WHERE {' AND '.join(condicoes)}" if condicoes else ''
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute(f'SELECT COUNT(*) AS total FROM clientes {onde}', parametros)
+        total = cursor.fetchone()['total']
+
+        offset = (pagina - 1) * por_pagina
+        cursor.execute(f'''
+            SELECT id, nome, cpf, email, tel, placa, ocupacao, status,
+                   tipo_cliente, empresa_convenio, data_criacao
+            FROM clientes
+            {onde}
+            ORDER BY nome
+            LIMIT ? OFFSET ?
+        ''', parametros + [por_pagina, offset])
+
+        clientes = [{
+            'id': c['id'],
+            'nome': c['nome'],
+            # Mesma máscara da busca (seção do balcão) — a tela de listagem
+            # não precisa do CPF inteiro; quem edita abre o detalhe completo.
+            'cpf': f"***{(c['cpf'] or '')[3:9]}**" if c['cpf'] else '',
+            'email': c['email'],
+            'tel': c['tel'],
+            'placa': c['placa'],
+            'ocupacao': c['ocupacao'],
+            'status': c['status'] or 'ativo',
+            'tipo_cliente': c['tipo_cliente'] or 'comum',
+            'empresa_convenio': c['empresa_convenio'],
+            'cadastrado_em': c['data_criacao'],
+        } for c in cursor.fetchall()]
+
+        conn.close()
+        return jsonify({
+            'clientes': clientes,
+            'total': total,
+            'pagina': pagina,
+            'por_pagina': por_pagina,
+            'total_paginas': max(1, (total + por_pagina - 1) // por_pagina),
+        }), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
 # ==================== LIBERAÇÕES EXTRAS (SÓ MASTER) ====================
 #
 # A regra normal é um cupom de combustível por dia e um de óleo por semana.
@@ -4496,6 +4584,190 @@ def admin_buscar_clientes():
 
         conn.close()
         return jsonify({'clientes': clientes, 'total': len(clientes)}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+# ==================== CORREÇÃO DE CADASTRO (SÓ MASTER) ====================
+#
+# O cliente se cadastra sozinho, sem ninguém conferindo em tempo real — se
+# ele errar o e-mail, o CPF ou o telefone na hora, ninguém mais consegue
+# corrigir: o cadastro fica errado para sempre (mesma dor documentada para
+# convênios em "encerrar trava o dado para sempre, em vez de liberar").
+#
+# Aqui o Master pode abrir um cadastro existente e corrigir os campos que
+# tipicamente saem errados na digitação. Fica de fora, de propósito,
+# ocupação/registro/empresa de convênio — esses têm fluxo próprio (aprovação
+# de cadastro, conversão de frentista) e mexer neles por aqui abriria uma
+# porta lateral para a mesma lógica que já existe em outro lugar.
+
+@app.route('/api/admin/clientes/<int:cliente_id>', methods=['GET'])
+@exige_master
+def admin_detalhe_cliente(cliente_id):
+    """Cadastro completo, sem máscara — só para preencher a tela de correção."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, nome, cpf, email, tel, endereco, placa, ocupacao,
+                   status, empresa_convenio, tipo_cliente, data_criacao
+            FROM clientes WHERE id = ?
+        ''', (cliente_id,))
+        c = cursor.fetchone()
+        conn.close()
+        if not c:
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+        return jsonify({'cliente': {
+            'id': c['id'],
+            'nome': c['nome'],
+            'cpf': c['cpf'],
+            'email': c['email'],
+            'tel': c['tel'],
+            'endereco': c['endereco'],
+            'placa': c['placa'],
+            'ocupacao': c['ocupacao'],
+            'status': c['status'],
+            'empresa_convenio': c['empresa_convenio'],
+            'tipo_cliente': c['tipo_cliente'],
+            'cadastrado_em': c['data_criacao'],
+        }}), 200
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/admin/clientes/<int:cliente_id>', methods=['PUT'])
+@exige_master
+def admin_editar_cliente(cliente_id):
+    """
+    Corrige nome, CPF, e-mail, telefone, endereço ou placa de um cadastro já
+    existente. Só o campo enviado é alterado — o Master corrige só o que
+    está errado, sem precisar reenviar o cadastro inteiro.
+    """
+    try:
+        data = request.get_json() or {}
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM clientes WHERE id = ?', (cliente_id,))
+        atual = cursor.fetchone()
+        if not atual:
+            conn.close()
+            return jsonify({'erro': 'Cliente não encontrado'}), 404
+
+        campos = ('nome', 'cpf', 'email', 'tel', 'endereco', 'placa')
+        if not any(campo in data for campo in campos):
+            conn.close()
+            return jsonify({'erro': 'Nenhum campo para atualizar.'}), 400
+
+        sets = []
+        valores = []
+        mudou_algo = False
+
+        if 'nome' in data:
+            nome = (data.get('nome') or '').strip()
+            if not nome:
+                conn.close()
+                return jsonify({'erro': 'Nome é obrigatório'}), 400
+            if nome != atual['nome']:
+                registrar_auditoria(cursor, request.admin, 'cliente_editado',
+                                     produto_id=cliente_id, campo='nome',
+                                     valor_anterior=atual['nome'], valor_novo=nome)
+                sets.append('nome = ?')
+                valores.append(nome)
+                mudou_algo = True
+
+        if 'cpf' in data:
+            cpf = re.sub(r'\D', '', str(data.get('cpf') or ''))
+            if not validar_cpf(cpf):
+                conn.close()
+                return jsonify({'erro': 'CPF inválido'}), 400
+            if cpf != (atual['cpf'] or ''):
+                cursor.execute('SELECT id FROM clientes WHERE cpf = ? AND id != ?',
+                               (cpf, cliente_id))
+                if cursor.fetchone():
+                    conn.close()
+                    return jsonify({'erro': 'Esse CPF já está cadastrado em outro cliente.'}), 400
+                registrar_auditoria(
+                    cursor, request.admin, 'cliente_editado',
+                    produto_id=cliente_id, campo='cpf',
+                    valor_anterior=f"***{(atual['cpf'] or '')[-4:]}" if atual['cpf'] else None,
+                    valor_novo=f"***{cpf[-4:]}"
+                )
+                sets.append('cpf = ?')
+                valores.append(cpf)
+                mudou_algo = True
+
+        if 'email' in data:
+            email = (data.get('email') or '').strip()
+            if not validar_email(email):
+                conn.close()
+                return jsonify({'erro': 'Email inválido'}), 400
+            if email.lower() != (atual['email'] or '').lower():
+                cursor.execute('SELECT id FROM clientes WHERE LOWER(email) = LOWER(?) AND id != ?',
+                               (email, cliente_id))
+                if cursor.fetchone():
+                    conn.close()
+                    return jsonify({'erro': 'Esse e-mail já está cadastrado em outro cliente.'}), 400
+                registrar_auditoria(cursor, request.admin, 'cliente_editado',
+                                     produto_id=cliente_id, campo='email',
+                                     valor_anterior=atual['email'], valor_novo=email)
+                sets.append('email = ?')
+                valores.append(email)
+                mudou_algo = True
+
+        if 'tel' in data:
+            tel = (data.get('tel') or '').strip()
+            if not tel:
+                conn.close()
+                return jsonify({'erro': 'Telefone é obrigatório'}), 400
+            if tel != (atual['tel'] or ''):
+                registrar_auditoria(cursor, request.admin, 'cliente_editado',
+                                     produto_id=cliente_id, campo='tel',
+                                     valor_anterior=atual['tel'], valor_novo=tel)
+                sets.append('tel = ?')
+                valores.append(tel)
+                mudou_algo = True
+
+        if 'endereco' in data:
+            endereco = (data.get('endereco') or '').strip()
+            if not endereco:
+                conn.close()
+                return jsonify({'erro': 'Endereço é obrigatório'}), 400
+            if endereco != (atual['endereco'] or ''):
+                registrar_auditoria(cursor, request.admin, 'cliente_editado',
+                                     produto_id=cliente_id, campo='endereco',
+                                     valor_anterior=atual['endereco'], valor_novo=endereco)
+                sets.append('endereco = ?')
+                valores.append(endereco)
+                mudou_algo = True
+
+        if 'placa' in data:
+            placa = normalizar_placa(data.get('placa'))
+            if placa:
+                erro_placa = validar_placa(placa)
+                if erro_placa:
+                    conn.close()
+                    return jsonify({'erro': erro_placa}), 400
+            if placa != (atual['placa'] or None):
+                registrar_auditoria(cursor, request.admin, 'cliente_editado',
+                                     produto_id=cliente_id, campo='placa',
+                                     valor_anterior=atual['placa'], valor_novo=placa)
+                sets.append('placa = ?')
+                valores.append(placa)
+                mudou_algo = True
+
+        if not mudou_algo:
+            conn.close()
+            return jsonify({'mensagem': 'Nada mudou — os valores enviados já eram os cadastrados.'}), 200
+
+        sets.append('data_atualizacao = ?')
+        valores.append(agora().isoformat())
+        valores.append(cliente_id)
+
+        cursor.execute(f'UPDATE clientes SET {", ".join(sets)} WHERE id = ?', valores)
+        conn.commit()
+        conn.close()
+        return jsonify({'mensagem': 'Cadastro atualizado.'}), 200
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
 
