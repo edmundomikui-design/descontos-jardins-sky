@@ -1446,13 +1446,60 @@ async function carregarClientesAdmin(pagina) {
 
 // ===================== FECHAMENTO DE CAIXA =====================
 function periodoRapido(inicio, fim) {
+    // atalhos de turno valem para UM dia só: zera o "até o dia"
+    document.getElementById('caixa-data-fim').value = '';
     document.getElementById('caixa-hora-inicio').value = inicio;
     document.getElementById('caixa-hora-fim').value = fim;
     carregarCaixa();
 }
 
+// Atalhos de vários dias. Usa só getFullYear/getMonth/getDate (hora local),
+// nunca toISOString — ver dores nº 12 e 19.
+function periodoDias(tipo) {
+    const hoje = new Date();
+    hoje.setHours(12, 0, 0, 0); // meio-dia: evita virada por horário de verão
+    let ini = new Date(hoje);
+    let fim = new Date(hoje);
+
+    if (tipo === 'ontem') {
+        ini.setDate(ini.getDate() - 1);
+        fim = new Date(ini);
+    } else if (tipo === 'semana' || tipo === 'semana-passada') {
+        // semana = segunda a domingo
+        const diasDesdeSegunda = (hoje.getDay() + 6) % 7;
+        ini.setDate(hoje.getDate() - diasDesdeSegunda);
+        fim = new Date(ini);
+        fim.setDate(ini.getDate() + 6);
+        if (tipo === 'semana-passada') {
+            ini.setDate(ini.getDate() - 7);
+            fim.setDate(fim.getDate() - 7);
+        } else if (fim > hoje) {
+            fim = new Date(hoje); // esta semana vai só até hoje
+        }
+    } else if (tipo === 'mes') {
+        ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1, 12);
+        fim = new Date(hoje);
+    } else if (tipo === 'mes-passado') {
+        ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1, 12);
+        fim = new Date(hoje.getFullYear(), hoje.getMonth(), 0, 12); // último dia do mês anterior
+    }
+    // 'hoje' mantém ini = fim = hoje
+
+    document.getElementById('caixa-data').value = dataLocalISO(ini);
+    document.getElementById('caixa-data-fim').value =
+        dataLocalISO(ini) === dataLocalISO(fim) ? '' : dataLocalISO(fim);
+    document.getElementById('caixa-hora-inicio').value = '';
+    document.getElementById('caixa-hora-fim').value = '';
+    carregarCaixa();
+}
+
+function brData(iso) {
+    return (iso || '').split('-').reverse().join('/');
+}
+
 async function carregarCaixa() {
     const data = document.getElementById('caixa-data').value;
+    const dataFim = document.getElementById('caixa-data-fim').value;
     const posto = document.getElementById('caixa-posto').value;
     const horaInicio = document.getElementById('caixa-hora-inicio').value;
     const horaFim = document.getElementById('caixa-hora-fim').value;
@@ -1463,9 +1510,13 @@ async function carregarCaixa() {
 
     try {
         const params = new URLSearchParams({ data });
+        if (dataFim && dataFim !== data) params.append('data_fim', dataFim);
         if (posto) params.append('poster_id', posto);
-        if (horaInicio) params.append('hora_inicio', horaInicio);
-        if (horaFim) params.append('hora_fim', horaFim);
+        // janela de horas só vale para um dia
+        if (!dataFim || dataFim === data) {
+            if (horaInicio) params.append('hora_inicio', horaInicio);
+            if (horaFim) params.append('hora_fim', horaFim);
+        }
         if (produto) params.append('produto_id', produto);
 
         const d = await api(`/admin/caixa?${params}`);
@@ -1493,13 +1544,20 @@ async function preencherFiltroProdutos() {
 
 function imprimirRelatorio() {
     const data = document.getElementById('caixa-data').value;
+    const dataFim = document.getElementById('caixa-data-fim').value;
+    const multiDia = dataFim && dataFim !== data;
     const ini = document.getElementById('caixa-hora-inicio').value;
     const fim = document.getElementById('caixa-hora-fim').value;
     const posto = document.getElementById('caixa-posto').value;
 
-    const periodo = ini || fim
-        ? `Período: ${ini || '00:00'} às ${fim || '23:59'}`
-        : 'Período: dia inteiro';
+    const periodo = multiDia
+        ? 'Período: dias inteiros'
+        : (ini || fim
+            ? `Período: ${ini || '00:00'} às ${fim || '23:59'}`
+            : 'Período: dia inteiro');
+    const rotuloData = multiDia
+        ? `De <strong>${brData(data)}</strong> a <strong>${brData(dataFim)}</strong>`
+        : `Data: <strong>${brData(data)}</strong>`;
 
     // cabeçalho que só aparece na impressão
     let cabecalho = document.getElementById('cabecalho-impressao');
@@ -1511,7 +1569,7 @@ function imprimirRelatorio() {
 
     cabecalho.innerHTML = `
         <h2>Relatório de Caixa — Jardins Sky</h2>
-        <p>Data: <strong>${(data || '').split('-').reverse().join('/')}</strong> ·
+        <p>${rotuloData} ·
            ${periodo} ·
            Posto: <strong>${posto || 'CAJ e SKY'}</strong></p>
         <p class="emitido">Emitido por ${sessao.nome || sessao.usuario} em ${new Date().toLocaleString('pt-BR')}</p>
@@ -1530,6 +1588,10 @@ function litros(v) {
 
 function renderizarCaixa(d) {
     const t = d.total;
+    const multiDia = d.data_fim && d.data_fim !== d.data;
+    const rotuloPeriodo = multiDia
+        ? `De <strong>${brData(d.data)}</strong> a <strong>${brData(d.data_fim)}</strong>`
+        : `Data: <strong>${brData(d.data)}</strong> · Turno agora: ${d.turno_atual}`;
 
     document.getElementById('resumo-geral').innerHTML = `
         <div class="cartoes">
@@ -1550,13 +1612,39 @@ function renderizarCaixa(d) {
                 <strong class="valor negativo">- ${reais(t.desconto_concedido)}</strong>
             </div>
         </div>
-        <p class="nota">Data: <strong>${d.data.split('-').reverse().join('/')}</strong> · Turno agora: ${d.turno_atual}</p>
+        <p class="nota">${rotuloPeriodo}</p>
+        ${multiDia && d.por_dia && d.por_dia.length ? `
+        <div class="card">
+            <h3>Dia a dia</h3>
+            <div class="rolagem">
+            <table class="tabela">
+                <thead>
+                    <tr><th>Dia</th><th class="num">Abast.</th><th class="num">Litros</th>
+                        <th class="num">Bruto</th><th class="num">Desconto</th>
+                        <th class="num">Recebido</th></tr>
+                </thead>
+                <tbody>
+                    ${d.por_dia.map(x => `
+                        <tr>
+                            <td><strong>${brData(x.data)}</strong></td>
+                            <td class="num">${x.abastecimentos}</td>
+                            <td class="num">${litros(x.litros)}</td>
+                            <td class="num">${reais(x.valor_bruto)}</td>
+                            <td class="num negativo">- ${reais(x.desconto_concedido)}</td>
+                            <td class="num"><strong>${reais(x.valor_recebido)}</strong></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            </div>
+        </div>` : ''}
     `;
 
     const f = d.filtros || {};
-    const janela = (f.hora_inicio || f.hora_fim)
-        ? `das ${(f.hora_inicio || '00:00:00').slice(0, 5)} às ${(f.hora_fim || '23:59:59').slice(0, 5)}`
-        : 'dia inteiro';
+    const janela = multiDia
+        ? `${brData(d.data)} a ${brData(d.data_fim)}`
+        : ((f.hora_inicio || f.hora_fim)
+            ? `das ${(f.hora_inicio || '00:00:00').slice(0, 5)} às ${(f.hora_fim || '23:59:59').slice(0, 5)}`
+            : 'dia inteiro');
     document.getElementById('titulo-abastecimentos').textContent =
         `Abastecimentos — ${janela} (${d.detalhes.length})`;
 
@@ -1621,7 +1709,7 @@ function renderizarCaixa(d) {
             <tbody>
                 ${d.detalhes.map(r => `
                     <tr>
-                        <td><strong>${(r.hora || '').slice(0, 5)}</strong></td>
+                        <td><strong>${multiDia ? brData(r.data).slice(0, 5) + ' ' : ''}${(r.hora || '').slice(0, 5)}</strong></td>
                         <td>${r.posto || ''}</td>
                         <td>${r.produto || ''}</td>
                         <td>${r.cliente || ''}</td>
