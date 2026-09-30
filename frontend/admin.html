@@ -121,15 +121,19 @@
     <section id="aba-caixa" class="conteudo">
         <div class="filtros">
             <div>
-                <label>Data</label>
+                <label>De (dia)</label>
                 <input type="date" id="caixa-data" onchange="carregarCaixa()">
             </div>
             <div>
-                <label>Das</label>
+                <label>Até o dia (opcional)</label>
+                <input type="date" id="caixa-data-fim" onchange="carregarCaixa()">
+            </div>
+            <div>
+                <label>Das (hora)</label>
                 <input type="time" id="caixa-hora-inicio" onchange="carregarCaixa()">
             </div>
             <div>
-                <label>Até</label>
+                <label>Até (hora)</label>
                 <input type="time" id="caixa-hora-fim" onchange="carregarCaixa()">
             </div>
             <div>
@@ -152,6 +156,15 @@
 
         <div class="atalhos-turno">
             <span>Períodos rápidos:</span>
+            <button class="btn-mini" onclick="periodoDias('hoje')">Hoje</button>
+            <button class="btn-mini" onclick="periodoDias('ontem')">Ontem</button>
+            <button class="btn-mini" onclick="periodoDias('semana')">Esta semana</button>
+            <button class="btn-mini" onclick="periodoDias('semana-passada')">Semana passada</button>
+            <button class="btn-mini" onclick="periodoDias('mes')">Este mês</button>
+            <button class="btn-mini" onclick="periodoDias('mes-passado')">Mês passado</button>
+        </div>
+        <div class="atalhos-turno">
+            <span>Turnos (um dia só):</span>
             <button class="btn-mini" onclick="periodoRapido('06:00','14:00')">Turno 1 · 6h-14h</button>
             <button class="btn-mini" onclick="periodoRapido('14:00','22:00')">Turno 2 · 14h-22h</button>
             <button class="btn-mini" onclick="periodoRapido('22:00','23:59')">Turno 3 · 22h-6h</button>
@@ -724,6 +737,6 @@
     </section>
 </div>
 
-<script src="js/admin.js?v=7"></script>
+<script src="js/admin.js?v=8"></script>
 </body>
 </html>

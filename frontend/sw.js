@@ -38,7 +38,7 @@
 // cliente, faixa "fulano te indicou" no cadastro e aba nova no admin.
 // v22: campanha de frentistas — aba nova no admin (só Master), "clientes"
 // virou "parceiros" nas mensagens do programa de indicação.
-const CACHE = 'cajsky-v22';
+const CACHE = 'cajsky-v23';
 
 const ESSENCIAIS = [
     '/',
