@@ -2880,9 +2880,23 @@ def admin_fechamento_caixa():
     """Fechamento de caixa: abastecimentos, litros e R$ por turno.
 
     Parâmetros: data (YYYY-MM-DD, padrão hoje), turno (opcional), poster_id (opcional)
+    data_fim (YYYY-MM-DD, opcional): com ela o relatório cobre o intervalo
+    data..data_fim inclusive (semana, mês...). Em intervalo de vários dias os
+    filtros de hora não se aplicam — a janela de horas só faz sentido num dia.
     """
     try:
         data_ref = request.args.get('data') or agora().strftime('%Y-%m-%d')
+        data_fim = request.args.get('data_fim') or data_ref
+        try:
+            d_ini = datetime.strptime(data_ref, '%Y-%m-%d').date()
+            d_fim = datetime.strptime(data_fim, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'erro': 'Data inválida. Use o formato AAAA-MM-DD.'}), 400
+        if d_fim < d_ini:
+            return jsonify({'erro': 'A data final não pode ser anterior à data inicial.'}), 400
+        if (d_fim - d_ini).days > 366:
+            return jsonify({'erro': 'Período longo demais. Consulte no máximo 1 ano por vez.'}), 400
+        multi_dia = d_fim > d_ini
         turno_filtro = request.args.get('turno')
         poster_id = request.args.get('poster_id')
         hora_inicio = request.args.get('hora_inicio')   # ex: 14:00
@@ -2897,6 +2911,9 @@ def admin_fechamento_caixa():
 
         hora_inicio = normaliza_hora(hora_inicio)
         hora_fim = normaliza_hora(hora_fim)
+        if multi_dia:
+            hora_inicio = None
+            hora_fim = None
 
         conn = get_db()
         cursor = conn.cursor()
@@ -2906,9 +2923,9 @@ def admin_fechamento_caixa():
             FROM abastecimentos a
             LEFT JOIN produtos p ON p.id = a.produto_id
             LEFT JOIN clientes c ON c.id = a.cliente_id
-            WHERE a.data = ?
+            WHERE a.data >= ? AND a.data <= ?
         '''
-        params = [data_ref]
+        params = [data_ref, data_fim]
 
         if turno_filtro:
             query += ' AND a.turno = ?'
@@ -2930,10 +2947,28 @@ def admin_fechamento_caixa():
             query += ' AND a.hora <= ?'
             params.append(hora_fim)
 
-        query += ' ORDER BY a.hora'
+        query += ' ORDER BY a.data, a.hora'
         cursor.execute(query, params)
         registros = cursor.fetchall()
         conn.close()
+
+        # Resumo dia a dia (útil quando o período tem vários dias)
+        dias = {}
+        for r in registros:
+            dd = dias.setdefault(r['data'], {
+                'data': r['data'], 'abastecimentos': 0, 'litros': 0.0,
+                'valor_bruto': 0.0, 'desconto_concedido': 0.0, 'valor_recebido': 0.0
+            })
+            dd['abastecimentos'] += 1
+            dd['litros'] += r['quantidade'] or 0
+            dd['valor_bruto'] += r['valor_original'] or 0
+            dd['desconto_concedido'] += r['valor_desconto'] or 0
+            dd['valor_recebido'] += r['valor_final'] or 0
+        por_dia = []
+        for dd in sorted(dias.values(), key=lambda x: x['data']):
+            for c in ('litros', 'valor_bruto', 'desconto_concedido', 'valor_recebido'):
+                dd[c] = round(dd[c], 2)
+            por_dia.append(dd)
 
         turnos = {}
         for r in registros:
@@ -2999,6 +3034,7 @@ def admin_fechamento_caixa():
 
         return jsonify({
             'data': data_ref,
+            'data_fim': data_fim,
             'turno_atual': obter_turno(),
             'filtros': {
                 'hora_inicio': hora_inicio,
@@ -3008,8 +3044,10 @@ def admin_fechamento_caixa():
                 'produto_id': produto_filtro
             },
             'total': total,
+            'por_dia': por_dia,
             'turnos': lista_turnos,
             'detalhes': [{
+                'data': r['data'],
                 'hora': r['hora'],
                 'turno': r['turno'],
                 'posto': r['poster_id'],
