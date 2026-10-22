@@ -2964,11 +2964,41 @@ def admin_fechamento_caixa():
             dd['valor_bruto'] += r['valor_original'] or 0
             dd['desconto_concedido'] += r['valor_desconto'] or 0
             dd['valor_recebido'] += r['valor_final'] or 0
+            rpp = dd.setdefault('recebido_por_posto', {})
+            chave_posto = r['poster_id'] or 'N/A'
+            rpp[chave_posto] = rpp.get(chave_posto, 0.0) + (r['valor_final'] or 0)
         por_dia = []
         for dd in sorted(dias.values(), key=lambda x: x['data']):
             for c in ('litros', 'valor_bruto', 'desconto_concedido', 'valor_recebido'):
                 dd[c] = round(dd[c], 2)
+            dd['recebido_por_posto'] = {k: round(v, 2) for k, v in dd.get('recebido_por_posto', {}).items()}
             por_dia.append(dd)
+
+        # Quadro por posto: total do período de cada posto, lado a lado.
+        # CAJ e SKY aparecem sempre (mesmo zerados, como o SKY antes de entrar);
+        # qualquer outro posto que tenha movimento (ex.: 'N/A') aparece também.
+        postos_quadro = {}
+        for nome_posto in ('CAJ', 'SKY'):
+            postos_quadro[nome_posto] = {
+                'posto': nome_posto, 'abastecimentos': 0, 'litros': 0.0,
+                'valor_bruto': 0.0, 'desconto_concedido': 0.0, 'valor_recebido': 0.0
+            }
+        for r in registros:
+            nome_posto = r['poster_id'] or 'N/A'
+            pq = postos_quadro.setdefault(nome_posto, {
+                'posto': nome_posto, 'abastecimentos': 0, 'litros': 0.0,
+                'valor_bruto': 0.0, 'desconto_concedido': 0.0, 'valor_recebido': 0.0
+            })
+            pq['abastecimentos'] += 1
+            pq['litros'] += r['quantidade'] or 0
+            pq['valor_bruto'] += r['valor_original'] or 0
+            pq['desconto_concedido'] += r['valor_desconto'] or 0
+            pq['valor_recebido'] += r['valor_final'] or 0
+        por_posto_total = []
+        for pq in postos_quadro.values():
+            for c in ('litros', 'valor_bruto', 'desconto_concedido', 'valor_recebido'):
+                pq[c] = round(pq[c], 2)
+            por_posto_total.append(pq)
 
         turnos = {}
         for r in registros:
@@ -3045,6 +3075,7 @@ def admin_fechamento_caixa():
             },
             'total': total,
             'por_dia': por_dia,
+            'por_posto_total': por_posto_total,
             'turnos': lista_turnos,
             'detalhes': [{
                 'data': r['data'],

@@ -99,6 +99,54 @@ class Periodo(unittest.TestCase):
         d = self.get('data=2026-09-01&data_fim=2026-09-30&produto_id=3').get_json()
         self.assertEqual(d['total']['abastecimentos'], 1)
 
+    # ---------- quadro por posto (CAJ x SKY lado a lado) ----------
+    def test_quadro_por_posto_soma_cada_posto_no_periodo(self):
+        d = self.get('data=2026-09-01&data_fim=2026-09-30').get_json()
+        q = {p['posto']: p for p in d['por_posto_total']}
+        self.assertEqual(q['CAJ']['abastecimentos'], 2)
+        self.assertEqual(q['CAJ']['litros'], 40.0)
+        self.assertEqual(q['CAJ']['valor_bruto'], 232.0)
+        self.assertEqual(q['CAJ']['desconto_concedido'], 10.0)
+        self.assertEqual(q['CAJ']['valor_recebido'], 222.0)
+        self.assertEqual(q['SKY']['abastecimentos'], 2)
+        self.assertEqual(q['SKY']['litros'], 60.0)
+        self.assertEqual(q['SKY']['valor_bruto'], 312.0)
+        self.assertEqual(q['SKY']['desconto_concedido'], 10.0)
+        self.assertEqual(q['SKY']['valor_recebido'], 302.0)
+
+    def test_quadro_por_posto_bate_com_o_total(self):
+        d = self.get('data=2026-09-01&data_fim=2026-09-30').get_json()
+        for campo in ('abastecimentos', 'litros', 'valor_bruto',
+                      'desconto_concedido', 'valor_recebido'):
+            soma = round(sum(p[campo] for p in d['por_posto_total']), 2)
+            self.assertEqual(soma, d['total'][campo], campo)
+
+    def test_quadro_mostra_caj_e_sky_mesmo_sem_movimento(self):
+        # o SKY ainda não vende pelo app: tem que aparecer zerado, não sumir
+        d = self.get('data=2026-01-01&data_fim=2026-01-31').get_json()
+        q = {p['posto']: p for p in d['por_posto_total']}
+        self.assertEqual(sorted(q), ['CAJ', 'SKY'])
+        self.assertEqual(q['SKY']['abastecimentos'], 0)
+        self.assertEqual(q['SKY']['valor_recebido'], 0)
+
+    def test_quadro_respeita_o_filtro_de_posto(self):
+        d = self.get('data=2026-09-01&data_fim=2026-09-30&poster_id=SKY').get_json()
+        q = {p['posto']: p for p in d['por_posto_total']}
+        self.assertEqual(q['CAJ']['abastecimentos'], 0)
+        self.assertEqual(q['SKY']['valor_recebido'], 302.0)
+
+    def test_dia_a_dia_traz_o_recebido_de_cada_posto(self):
+        d = self.get('data=2026-09-01&data_fim=2026-09-30').get_json()
+        dias = {x['data']: x for x in d['por_dia']}
+        self.assertEqual(dias['2026-09-01']['recebido_por_posto'], {'CAJ': 53.0, 'SKY': 75.0})
+        self.assertEqual(dias['2026-09-30']['recebido_por_posto'], {'SKY': 227.0})
+
+    def test_quadro_tambem_vale_para_um_dia_so(self):
+        d = self.get('data=2026-09-01').get_json()
+        q = {p['posto']: p for p in d['por_posto_total']}
+        self.assertEqual(q['CAJ']['valor_recebido'], 53.0)
+        self.assertEqual(q['SKY']['valor_recebido'], 75.0)
+
     # ---------- compatibilidade: o dia único continua igual ----------
     def test_dia_unico_sem_data_fim_continua_funcionando(self):
         d = self.get('data=2026-09-01').get_json()
