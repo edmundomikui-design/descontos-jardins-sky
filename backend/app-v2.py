@@ -60,6 +60,10 @@ from email_service import (
     email_configurado,
 )
 
+# Postos que um usuário do painel pode ter. CAJ = Centro Automotivo Jardins,
+# SKY = Sky Auto Posto, AMBOS = gerência/master que enxerga os dois.
+POSTOS_VALIDOS = ('CAJ', 'SKY', 'AMBOS')
+
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
@@ -378,6 +382,17 @@ def exige_master(f):
         request.admin = admin
         return f(*args, **kwargs)
     return wrapper
+
+
+def posto_travado(admin):
+    """Posto a que o usuário está preso, ou None se enxerga os dois.
+
+    Usuário com posto CAJ ou SKY só consulta vendas do próprio posto, não
+    importa o que peça na tela: a regra vale no servidor. Quem está como
+    AMBOS (Master/gerência) continua vendo os dois.
+    """
+    posto = (admin['poster_id'] or '').strip().upper() if admin else ''
+    return posto if posto in ('CAJ', 'SKY') else None
 
 
 def exige_gerencia(f):
@@ -1939,9 +1954,18 @@ def usar_cupom():
         quantidade_agora = float(data.get('quantidade', 0))
         valor_sem_desconto = float(data.get('valor_sem_desconto', 0))
 
-        # O posto vem do usuário logado — o frentista não escolhe, para o
-        # abastecimento não cair no caixa do posto errado.
-        poster_id = request.admin['poster_id'] or data.get('poster_id')
+        # O posto vem do usuário logado — ninguém escolhe, para o abastecimento
+        # nunca cair no caixa do posto errado. Frentista/caixa do Jardins só
+        # vende no Jardins e o do Sky só no Sky. O que a tela mandar em
+        # 'poster_id' é ignorado de propósito. Quem está como AMBOS (ou sem
+        # posto) só consulta: não registra venda.
+        poster_id = posto_travado(request.admin)
+        if not poster_id:
+            return jsonify({
+                'erro': 'Seu usuário não tem um posto definido (CAJ ou SKY) e por isso '
+                        'não pode registrar abastecimento. Peça ao Master para definir '
+                        'o seu posto em Usuários.'
+            }), 403
 
         if not qrcode or not produto_id or quantidade_agora <= 0:
             return jsonify({'erro': 'Dados incompletos'}), 400
@@ -2226,6 +2250,11 @@ def relatorio_admin():
         poster_id = request.args.get('poster_id')
         produto_id = request.args.get('produto_id')
 
+        # Quem está preso a um posto só enxerga o próprio, qualquer que seja o filtro
+        fixo = posto_travado(request.admin)
+        if fixo:
+            poster_id = fixo
+
         conn = get_db()
         cursor = conn.cursor()
 
@@ -2457,7 +2486,10 @@ def admin_criar_usuario():
         senha = data.get('senha') or ''
         nivel = data.get('nivel') or 'caixa'
         email = (data.get('email') or '').strip()
+        poster_id = (data.get('poster_id') or 'AMBOS').strip().upper()
 
+        if poster_id not in POSTOS_VALIDOS:
+            return jsonify({'erro': "Posto deve ser 'CAJ', 'SKY' ou 'AMBOS'"}), 400
         if len(usuario) < 3:
             return jsonify({'erro': 'Usuário deve ter ao menos 3 caracteres'}), 400
         if len(senha) < 8:
@@ -2504,7 +2536,7 @@ def admin_criar_usuario():
         cursor.execute('''
             INSERT INTO admin (usuario, senha_hash, poster_id, nivel, nome, email, ativo)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (usuario, generate_password_hash(senha), data.get('poster_id') or 'AMBOS',
+        ''', (usuario, generate_password_hash(senha), poster_id,
               nivel, data.get('nome') or usuario, email, 1))
 
         conn.commit()
@@ -2545,6 +2577,16 @@ def admin_alterar_usuario(usuario_id):
                 conn.close()
                 return jsonify({'erro': "Nível deve ser 'master', 'gerencia' ou 'caixa'"}), 400
             cursor.execute('UPDATE admin SET nivel = ? WHERE id = ?', (data['nivel'], usuario_id))
+
+        # Posto do usuário: é dele que vem o posto de cada abastecimento
+        # que ele registra na pista (CAJ, SKY ou AMBOS).
+        if 'poster_id' in data:
+            novo_posto = (data.get('poster_id') or '').strip().upper()
+            if novo_posto not in POSTOS_VALIDOS:
+                conn.close()
+                return jsonify({'erro': "Posto deve ser 'CAJ', 'SKY' ou 'AMBOS'"}), 400
+            cursor.execute('UPDATE admin SET poster_id = ? WHERE id = ?',
+                           (novo_posto, usuario_id))
 
         if 'ativo' in data:
             cursor.execute('UPDATE admin SET ativo = ?, token = NULL WHERE id = ?',
@@ -2899,6 +2941,10 @@ def admin_fechamento_caixa():
         multi_dia = d_fim > d_ini
         turno_filtro = request.args.get('turno')
         poster_id = request.args.get('poster_id')
+        # Quem está preso a um posto só enxerga o próprio, qualquer que seja o filtro
+        fixo = posto_travado(request.admin)
+        if fixo:
+            poster_id = fixo
         hora_inicio = request.args.get('hora_inicio')   # ex: 14:00
         hora_fim = request.args.get('hora_fim')         # ex: 18:00
         produto_filtro = request.args.get('produto_id')
@@ -2978,7 +3024,7 @@ def admin_fechamento_caixa():
         # CAJ e SKY aparecem sempre (mesmo zerados, como o SKY antes de entrar);
         # qualquer outro posto que tenha movimento (ex.: 'N/A') aparece também.
         postos_quadro = {}
-        for nome_posto in ('CAJ', 'SKY'):
+        for nome_posto in ((fixo,) if fixo else ('CAJ', 'SKY')):
             postos_quadro[nome_posto] = {
                 'posto': nome_posto, 'abastecimentos': 0, 'litros': 0.0,
                 'valor_bruto': 0.0, 'desconto_concedido': 0.0, 'valor_recebido': 0.0
@@ -3074,6 +3120,7 @@ def admin_fechamento_caixa():
                 'produto_id': produto_filtro
             },
             'total': total,
+            'posto_travado': fixo,
             'por_dia': por_dia,
             'por_posto_total': por_posto_total,
             'turnos': lista_turnos,
@@ -4442,15 +4489,26 @@ def admin_listar_fechamentos():
     """Turnos já fechados — para a gerência conferir contra o caixa."""
     try:
         data_ref = (request.args.get('data') or '').strip()
+        # Quem está preso a um posto só vê os fechamentos de turno do próprio posto
+        fixo = posto_travado(request.admin)
         conn = get_db()
         cursor = conn.cursor()
 
-        if data_ref:
+        if data_ref and fixo:
+            cursor.execute('''
+                SELECT * FROM fechamentos_turno
+                WHERE SUBSTR(fechado_em, 1, 10) = ? AND poster_id = ?
+                ORDER BY id DESC
+            ''', (data_ref, fixo))
+        elif data_ref:
             cursor.execute('''
                 SELECT * FROM fechamentos_turno
                 WHERE SUBSTR(fechado_em, 1, 10) = ?
                 ORDER BY id DESC
             ''', (data_ref,))
+        elif fixo:
+            cursor.execute('SELECT * FROM fechamentos_turno WHERE poster_id = ? '
+                           'ORDER BY id DESC LIMIT 30', (fixo,))
         else:
             cursor.execute('SELECT * FROM fechamentos_turno ORDER BY id DESC LIMIT 30')
 

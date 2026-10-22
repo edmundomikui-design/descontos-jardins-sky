@@ -405,6 +405,25 @@ def _schema(pg):
             cupom_id INTEGER,
             data_aplicacao TEXT
         )''',
+
+        # Correções de DADOS que rodam uma única vez. A linha com o nome da
+        # correção é a trava: se ela existe, a correção não roda de novo.
+        f'''CREATE TABLE IF NOT EXISTS migracoes_dados (
+            id {serial},
+            nome TEXT UNIQUE NOT NULL,
+            executada_em TEXT NOT NULL,
+            detalhe TEXT
+        )''',
+
+        # Cópia do valor antigo de cada linha alterada por uma correção de
+        # dados — é o que permite desfazer.
+        f'''CREATE TABLE IF NOT EXISTS backup_posto_historico (
+            id {serial},
+            tabela TEXT NOT NULL,
+            registro_id INTEGER NOT NULL,
+            poster_id_antigo TEXT,
+            migracao TEXT NOT NULL
+        )''',
     ]
 
 
@@ -584,6 +603,63 @@ def _colunas_existentes(cursor, tabela, pg):
     return {linha[1] for linha in cursor.fetchall()}
 
 
+MIGRACAO_HISTORICO_CAJ = 'historico_posto_para_caj_2026_10_22'
+
+
+def _migrar_historico_para_caj(cursor, pg):
+    """
+    Passa para CAJ (Jardins) as vendas e os fechamentos de turno gravados com
+    um posto que não é CAJ nem SKY (AMBOS, vazio ou valor estranho).
+
+    Decisão do Edmundo em 22/10/2026: até aqui só o Jardins vendeu; o Sky
+    ainda não começou. Os usuários nasciam com posto AMBOS e as vendas do
+    Jardins foram gravadas assim.
+
+    Roda UMA vez: a linha em migracoes_dados é a trava. O valor antigo de cada
+    linha alterada fica em backup_posto_historico, para poder desfazer. Linhas
+    que já estão como CAJ ou SKY não são tocadas, e vendas feitas depois (que
+    já saem com o posto certo) também não.
+    """
+    # "Reservar" a correção antes de fazer: se dois processos sobem juntos,
+    # só um deles consegue inserir esta linha e é só ele que corrige.
+    if pg:
+        cursor.execute('''
+            INSERT INTO migracoes_dados (nome, executada_em, detalhe)
+            VALUES (?, ?, 'em andamento')
+            ON CONFLICT (nome) DO NOTHING
+        ''', (MIGRACAO_HISTORICO_CAJ, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    else:
+        cursor.execute('''
+            INSERT OR IGNORE INTO migracoes_dados (nome, executada_em, detalhe)
+            VALUES (?, ?, 'em andamento')
+        ''', (MIGRACAO_HISTORICO_CAJ, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    if cursor.rowcount != 1:
+        return   # já rodou antes (ou outro processo está rodando agora)
+
+    corrigidos = {}
+    for tabela in ('abastecimentos', 'fechamentos_turno'):
+        cursor.execute(
+            f"SELECT id, poster_id FROM {tabela} "
+            f"WHERE poster_id IS NULL OR poster_id NOT IN ('CAJ', 'SKY')")
+        linhas = cursor.fetchall()
+        for linha in linhas:
+            cursor.execute('''
+                INSERT INTO backup_posto_historico
+                (tabela, registro_id, poster_id_antigo, migracao)
+                VALUES (?, ?, ?, ?)
+            ''', (tabela, linha['id'], linha['poster_id'], MIGRACAO_HISTORICO_CAJ))
+        if linhas:
+            cursor.execute(
+                f"UPDATE {tabela} SET poster_id = 'CAJ' "
+                f"WHERE poster_id IS NULL OR poster_id NOT IN ('CAJ', 'SKY')")
+        corrigidos[tabela] = len(linhas)
+
+    detalhe = ', '.join(f'{t}: {n}' for t, n in corrigidos.items())
+    cursor.execute('UPDATE migracoes_dados SET detalhe = ? WHERE nome = ?',
+                   (f'para CAJ — {detalhe}', MIGRACAO_HISTORICO_CAJ))
+    print(f"🔧 Migração de dados: histórico passou para CAJ ({detalhe})")
+
+
 def init_db():
     """Cria as tabelas e aplica migrações. Seguro rodar várias vezes."""
     pg = USANDO_POSTGRES
@@ -649,6 +725,8 @@ def init_db():
                     f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo_pg if pg else tipo_sqlite}'
                 )
                 print(f"🔧 Migração: coluna {tabela}.{nome} adicionada")
+
+    _migrar_historico_para_caj(cursor, pg)
 
     conn.commit()
     conn.close()

@@ -49,7 +49,7 @@ def login_admin_master():
     # cria o primeiro admin (master) se ainda não existir
     r_setup = client.post('/api/admin/setup', json={
         'usuario': 'master', 'senha': 'Senha123!', 'nome': 'Master Teste',
-        'poster_id': 'jardins', 'email': 'master@teste.com'
+        'poster_id': 'CAJ', 'email': 'master@teste.com'
     })
     r = client.post('/api/admin/login', json={'usuario': 'master', 'senha': 'Senha123!'})
     d = r.get_json()

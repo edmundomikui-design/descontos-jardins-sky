@@ -59,6 +59,8 @@ class TestFuso(unittest.TestCase):
         conn = appv2.get_db()
         cur = conn.cursor()
         cur.execute('UPDATE produtos SET preco_custo = 1.00, desconto_valor = 0.50')
+        # Quem registra venda precisa ter posto (CAJ ou SKY); AMBOS só consulta.
+        cur.execute("UPDATE admin SET poster_id = 'CAJ'")
         conn.commit()
         conn.close()
 
