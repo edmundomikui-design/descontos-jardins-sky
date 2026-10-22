@@ -262,6 +262,7 @@ function trocarAba(nome) {
     if (nome === 'suspeitas') carregarSuspeitas();
     if (nome === 'convenios') carregarConvenios();
     if (nome === 'indicacoes') carregarIndicacoesAdmin();
+    if (nome === 'clientes') carregarClientesAdmin(1);
     if (nome === 'frentistas') carregarFrentistasAdmin();
     if (nome === 'liberacoes') carregarLiberacoes();
     if (nome === 'cupons') abrirCuponsDoDia();
@@ -343,7 +344,13 @@ async function buscarClientes(evento) {
                             ${c.empresa_convenio ? '· ' + escaparHtml(c.empresa_convenio) : ''}
                         </span>
                     </div>
+                    <button class="btn-mini" style="background:#eee;color:#333;height:fit-content;"
+                            onclick="toggleEditarCliente(${c.id})">
+                        ✏️ Editar cadastro
+                    </button>
                 </div>
+
+                <div id="editar-${c.id}" style="display:none;"></div>
 
                 <div style="margin:12px 0;font-size:14px;line-height:1.9;">
                     ${linhaConsumo('Combustível hoje', comb, fmt(comb.data))}<br>
@@ -378,6 +385,95 @@ async function buscarClientes(evento) {
         alvo.innerHTML = `<p class="msg-erro">${e.message}</p>`;
     }
     return false;
+}
+
+// ===================== EDITAR CADASTRO (correção de erro do cliente, só Master) =====================
+//
+// O cliente se cadastra sozinho, sem ninguém conferindo em tempo real. Se ele
+// errar o e-mail, o CPF, o telefone ou qualquer outro dado, ninguém tinha
+// como corrigir — o cadastro ficava errado para sempre. Aqui o Master abre o
+// cadastro completo (sem máscara) e corrige só o que precisar.
+
+// Depois de salvar uma correção, cada tela sabe como se atualizar (a busca
+// avulsa refaz a busca; a listagem completa recarrega a página atual). Fica
+// registrado aqui, por cliente, na hora de abrir o formulário.
+const _refrescarAposEdicaoCliente = {};
+
+async function toggleEditarCliente(clienteId, trId = null, refrescar = null) {
+    const painel = document.getElementById(`editar-${clienteId}`);
+    if (!painel) return;
+    const linha = trId ? document.getElementById(trId) : null;
+
+    _refrescarAposEdicaoCliente[clienteId] = refrescar;
+
+    const abrindo = painel.style.display === 'none';
+    painel.style.display = abrindo ? 'block' : 'none';
+    if (linha) linha.style.display = abrindo ? 'table-row' : 'none';
+    if (!abrindo || painel.dataset.carregado) return;
+
+    painel.innerHTML = '<p class="carregando">Carregando cadastro...</p>';
+    try {
+        const d = await api(`/admin/clientes/${clienteId}`);
+        const c = d.cliente;
+
+        const campo = (rotulo, id, valor, opcoes = '') => `
+            <label style="font-size:13px;font-weight:600;">${rotulo}</label>
+            <input type="text" id="${id}" value="${escaparHtml(valor || '')}" ${opcoes}
+                   style="width:100%;padding:10px;margin:4px 0 10px;font-size:14px;
+                          border:1.5px solid #d1d5db;border-radius:6px;">`;
+
+        painel.innerHTML = `
+            <div style="border-top:1px solid #eee;margin-top:12px;padding-top:12px;
+                        background:#fafafa;padding:12px;border-radius:8px;">
+                <p class="ajuda" style="margin-top:0;">
+                    Corrija só o que estiver errado — os outros campos ficam como estão.
+                </p>
+                ${campo('Nome', `ed-nome-${clienteId}`, c.nome)}
+                ${campo('CPF (só números)', `ed-cpf-${clienteId}`, c.cpf, 'maxlength="11"')}
+                ${campo('E-mail', `ed-email-${clienteId}`, c.email)}
+                ${campo('Telefone', `ed-tel-${clienteId}`, c.tel)}
+                ${campo('Endereço', `ed-endereco-${clienteId}`, c.endereco)}
+                ${campo('Placa', `ed-placa-${clienteId}`, c.placa, 'maxlength="7"')}
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                    <button class="btn-mini" onclick="salvarEdicaoCliente(${clienteId})">
+                        💾 Salvar correção
+                    </button>
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            onclick="toggleEditarCliente(${clienteId}, ${trId ? `'${trId}'` : null})">
+                        Cancelar
+                    </button>
+                </div>
+            </div>`;
+        painel.dataset.carregado = '1';
+    } catch (e) {
+        painel.innerHTML = `<p class="msg-erro">${e.message}</p>`;
+    }
+}
+
+async function salvarEdicaoCliente(clienteId) {
+    const pegar = campo => (document.getElementById(`ed-${campo}-${clienteId}`)?.value || '').trim();
+    const dados = {
+        nome: pegar('nome'),
+        cpf: pegar('cpf').replace(/\D/g, ''),
+        email: pegar('email'),
+        tel: pegar('tel'),
+        endereco: pegar('endereco'),
+        placa: pegar('placa'),
+    };
+
+    try {
+        const d = await api(`/admin/clientes/${clienteId}`, {
+            method: 'PUT',
+            body: JSON.stringify(dados)
+        });
+        aviso(`✅ ${d.mensagem}`);
+        const refrescar = _refrescarAposEdicaoCliente[clienteId];
+        if (refrescar) { refrescar(); return; }
+        // Recarrega a busca para a ficha já mostrar os dados corrigidos.
+        document.getElementById('busca-cliente')?.form?.requestSubmit();
+    } catch (e) {
+        aviso(`❌ ${e.message}`, 'erro');
+    }
 }
 
 async function liberarExtra(clienteId, categoria) {
@@ -1227,7 +1323,7 @@ async function carregarFrentistasAdmin() {
             <table class="tabela">
                 <thead>
                     <tr>
-                        <th>Nome</th><th>CPF</th><th>Placa</th>
+                        <th>Nome</th><th>CPF</th><th>Placa</th><th>E-mail de login</th>
                         <th>Cupom da semana</th><th>Próximo em</th><th></th>
                     </tr>
                 </thead>
@@ -1237,6 +1333,7 @@ async function carregarFrentistasAdmin() {
                             <td>${escapar(f.nome)}</td>
                             <td>${escapar(f.cpf)}</td>
                             <td>${escapar(f.placa || '—')}</td>
+                            <td>${escapar(f.email || '—')}</td>
                             <td>${rotuloCupom[f.cupom_semana] || escapar(f.cupom_semana)}</td>
                             <td>${f.proximo_cupom_em ? escapar(f.proximo_cupom_em) : '—'}</td>
                             <td><button class="btn btn-secundario"
@@ -1245,8 +1342,103 @@ async function carregarFrentistasAdmin() {
                             </button></td>
                         </tr>`).join('')}
                 </tbody>
-            </table>`;
+            </table>
+            <p style="font-size:0.85em; color:#666; margin-top:8px;">
+                💡 O e-mail de login de cada frentista aparece aqui. Repasse esse e-mail exato
+                para ele — a senha é a que você cadastrou. Se ele esqueceu a senha, use
+                "Esqueci minha senha" no app com esse mesmo e-mail: como todos caem na mesma
+                caixa postocajardins@gmail.com, você recebe o link de redefinição normalmente.
+            </p>`;
         preencherPadroesFrentista(d.frentistas.length);
+    } catch (e) {
+        alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
+    }
+}
+
+// ===================== LISTAGEM DE CLIENTES (todos, com contagem, só Master) =====================
+//
+// Antes só existia a busca (mínimo 3 caracteres). Sem digitar nada, não dava
+// pra ver quantos clientes existem nem os nomes de todos. Esta aba lista
+// todo mundo, paginado, com o total no topo, e abre o mesmo formulário de
+// correção usado na busca avulsa (ver seção 39 das dores do projeto).
+
+let _clientesAdminPagina = 1;
+
+async function carregarClientesAdmin(pagina) {
+    if (typeof pagina === 'number') _clientesAdminPagina = pagina;
+    const alvo = document.getElementById('clientes-lista');
+    const resumo = document.getElementById('clientes-resumo');
+    if (!alvo) return;
+
+    const termo = (document.getElementById('clientes-busca')?.value || '').trim();
+    const status = document.getElementById('clientes-status')?.value || '';
+
+    alvo.innerHTML = '<p class="carregando">Carregando...</p>';
+    try {
+        const params = new URLSearchParams({
+            pagina: String(_clientesAdminPagina),
+            por_pagina: '50',
+        });
+        if (termo) params.append('q', termo);
+        if (status) params.append('status', status);
+
+        const d = await api(`/admin/clientes?${params.toString()}`);
+
+        if (resumo) {
+            resumo.textContent = d.total === 0
+                ? 'Nenhum cliente encontrado.'
+                : `${d.total} cliente${d.total === 1 ? '' : 's'} no total` +
+                  (d.total_paginas > 1 ? ` — página ${d.pagina} de ${d.total_paginas}` : '');
+        }
+
+        if (!d.clientes.length) {
+            alvo.innerHTML = '<p class="vazio">Nenhum cliente encontrado com esse filtro.</p>';
+            return;
+        }
+
+        alvo.innerHTML = `
+            <table class="tabela">
+                <thead>
+                    <tr>
+                        <th>Nome</th><th>CPF</th><th>E-mail</th><th>Telefone</th>
+                        <th>Placa</th><th>Ocupação</th><th>Status</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${d.clientes.map(c => `
+                        <tr>
+                            <td>${escapar(c.nome)}</td>
+                            <td>${escapar(c.cpf)}</td>
+                            <td>${escapar(c.email)}</td>
+                            <td>${escapar(c.tel || '—')}</td>
+                            <td>${escapar(c.placa || '—')}</td>
+                            <td>${escapar(c.ocupacao || '—')}
+                                ${c.tipo_cliente === 'frentista' ? ' (frentista)' : ''}</td>
+                            <td>${c.status === 'ativo'
+                                    ? '✅ Ativo'
+                                    : `<span style="color:#c62828;">${escapar(c.status)}</span>`}</td>
+                            <td>
+                                <button class="btn-mini" style="background:#eee;color:#333;"
+                                        onclick="toggleEditarCliente(${c.id}, 'editar-tr-${c.id}', carregarClientesAdmin)">
+                                    ✏️ Editar
+                                </button>
+                            </td>
+                        </tr>
+                        <tr id="editar-tr-${c.id}" style="display:none;">
+                            <td colspan="8"><div id="editar-${c.id}" style="display:none;"></div></td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+            ${d.total_paginas > 1 ? `
+                <div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            ${d.pagina <= 1 ? 'disabled' : ''}
+                            onclick="carregarClientesAdmin(${d.pagina - 1})">← Anterior</button>
+                    <span class="ajuda">Página ${d.pagina} de ${d.total_paginas}</span>
+                    <button class="btn-mini" style="background:#eee;color:#333;"
+                            ${d.pagina >= d.total_paginas ? 'disabled' : ''}
+                            onclick="carregarClientesAdmin(${d.pagina + 1})">Próxima →</button>
+                </div>` : ''}`;
     } catch (e) {
         alvo.innerHTML = `<p class="vazio">Não consegui carregar: ${escapar(e.message)}</p>`;
     }
@@ -1254,13 +1446,60 @@ async function carregarFrentistasAdmin() {
 
 // ===================== FECHAMENTO DE CAIXA =====================
 function periodoRapido(inicio, fim) {
+    // atalhos de turno valem para UM dia só: zera o "até o dia"
+    document.getElementById('caixa-data-fim').value = '';
     document.getElementById('caixa-hora-inicio').value = inicio;
     document.getElementById('caixa-hora-fim').value = fim;
     carregarCaixa();
 }
 
+// Atalhos de vários dias. Usa só getFullYear/getMonth/getDate (hora local),
+// nunca toISOString — ver dores nº 12 e 19.
+function periodoDias(tipo) {
+    const hoje = new Date();
+    hoje.setHours(12, 0, 0, 0); // meio-dia: evita virada por horário de verão
+    let ini = new Date(hoje);
+    let fim = new Date(hoje);
+
+    if (tipo === 'ontem') {
+        ini.setDate(ini.getDate() - 1);
+        fim = new Date(ini);
+    } else if (tipo === 'semana' || tipo === 'semana-passada') {
+        // semana = segunda a domingo
+        const diasDesdeSegunda = (hoje.getDay() + 6) % 7;
+        ini.setDate(hoje.getDate() - diasDesdeSegunda);
+        fim = new Date(ini);
+        fim.setDate(ini.getDate() + 6);
+        if (tipo === 'semana-passada') {
+            ini.setDate(ini.getDate() - 7);
+            fim.setDate(fim.getDate() - 7);
+        } else if (fim > hoje) {
+            fim = new Date(hoje); // esta semana vai só até hoje
+        }
+    } else if (tipo === 'mes') {
+        ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1, 12);
+        fim = new Date(hoje);
+    } else if (tipo === 'mes-passado') {
+        ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1, 12);
+        fim = new Date(hoje.getFullYear(), hoje.getMonth(), 0, 12); // último dia do mês anterior
+    }
+    // 'hoje' mantém ini = fim = hoje
+
+    document.getElementById('caixa-data').value = dataLocalISO(ini);
+    document.getElementById('caixa-data-fim').value =
+        dataLocalISO(ini) === dataLocalISO(fim) ? '' : dataLocalISO(fim);
+    document.getElementById('caixa-hora-inicio').value = '';
+    document.getElementById('caixa-hora-fim').value = '';
+    carregarCaixa();
+}
+
+function brData(iso) {
+    return (iso || '').split('-').reverse().join('/');
+}
+
 async function carregarCaixa() {
     const data = document.getElementById('caixa-data').value;
+    const dataFim = document.getElementById('caixa-data-fim').value;
     const posto = document.getElementById('caixa-posto').value;
     const horaInicio = document.getElementById('caixa-hora-inicio').value;
     const horaFim = document.getElementById('caixa-hora-fim').value;
@@ -1271,12 +1510,27 @@ async function carregarCaixa() {
 
     try {
         const params = new URLSearchParams({ data });
+        if (dataFim && dataFim !== data) params.append('data_fim', dataFim);
         if (posto) params.append('poster_id', posto);
-        if (horaInicio) params.append('hora_inicio', horaInicio);
-        if (horaFim) params.append('hora_fim', horaFim);
+        // janela de horas só vale para um dia
+        if (!dataFim || dataFim === data) {
+            if (horaInicio) params.append('hora_inicio', horaInicio);
+            if (horaFim) params.append('hora_fim', horaFim);
+        }
         if (produto) params.append('produto_id', produto);
 
         const d = await api(`/admin/caixa?${params}`);
+
+        // Usuário preso a um posto (CAJ ou SKY): o filtro fica fixo no posto
+        // dele. A trava de verdade está no servidor; aqui só evita confusão.
+        const seletorPosto = document.getElementById('caixa-posto');
+        if (d.posto_travado) {
+            seletorPosto.value = d.posto_travado;
+            seletorPosto.disabled = true;
+        } else {
+            seletorPosto.disabled = false;
+        }
+
         renderizarCaixa(d);
         preencherFiltroProdutos();
     } catch (erro) {
@@ -1301,13 +1555,20 @@ async function preencherFiltroProdutos() {
 
 function imprimirRelatorio() {
     const data = document.getElementById('caixa-data').value;
+    const dataFim = document.getElementById('caixa-data-fim').value;
+    const multiDia = dataFim && dataFim !== data;
     const ini = document.getElementById('caixa-hora-inicio').value;
     const fim = document.getElementById('caixa-hora-fim').value;
     const posto = document.getElementById('caixa-posto').value;
 
-    const periodo = ini || fim
-        ? `Período: ${ini || '00:00'} às ${fim || '23:59'}`
-        : 'Período: dia inteiro';
+    const periodo = multiDia
+        ? 'Período: dias inteiros'
+        : (ini || fim
+            ? `Período: ${ini || '00:00'} às ${fim || '23:59'}`
+            : 'Período: dia inteiro');
+    const rotuloData = multiDia
+        ? `De <strong>${brData(data)}</strong> a <strong>${brData(dataFim)}</strong>`
+        : `Data: <strong>${brData(data)}</strong>`;
 
     // cabeçalho que só aparece na impressão
     let cabecalho = document.getElementById('cabecalho-impressao');
@@ -1319,7 +1580,7 @@ function imprimirRelatorio() {
 
     cabecalho.innerHTML = `
         <h2>Relatório de Caixa — Jardins Sky</h2>
-        <p>Data: <strong>${(data || '').split('-').reverse().join('/')}</strong> ·
+        <p>${rotuloData} ·
            ${periodo} ·
            Posto: <strong>${posto || 'CAJ e SKY'}</strong></p>
         <p class="emitido">Emitido por ${sessao.nome || sessao.usuario} em ${new Date().toLocaleString('pt-BR')}</p>
@@ -1336,8 +1597,64 @@ function litros(v) {
     return `${(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
 }
 
+// Quadro com o total do período de cada posto, lado a lado (CAJ, SKY e Total)
+function quadroPorPosto(d) {
+    const postos = d.por_posto_total || [];
+    if (!postos.length) return '';
+    const t = d.total;
+    const nomes = { CAJ: 'CAJ — Jardins', SKY: 'SKY — Sky Auto Posto' };
+    return `
+        <div class="card">
+            <h3>Por posto</h3>
+            <div class="rolagem">
+            <table class="tabela">
+                <thead>
+                    <tr><th>Posto</th><th class="num">Abast.</th><th class="num">Litros</th>
+                        <th class="num">Bruto</th><th class="num">Desconto</th>
+                        <th class="num">Recebido</th><th class="num">% do total</th></tr>
+                </thead>
+                <tbody>
+                    ${postos.map(p => {
+                        const pct = t.valor_recebido > 0
+                            ? (p.valor_recebido / t.valor_recebido * 100).toLocaleString('pt-BR',
+                                { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+                            : '—';
+                        return `
+                        <tr>
+                            <td><strong>${nomes[p.posto] || p.posto}</strong></td>
+                            <td class="num">${p.abastecimentos}</td>
+                            <td class="num">${litros(p.litros)}</td>
+                            <td class="num">${reais(p.valor_bruto)}</td>
+                            <td class="num negativo">- ${reais(p.desconto_concedido)}</td>
+                            <td class="num"><strong>${reais(p.valor_recebido)}</strong></td>
+                            <td class="num">${pct}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td><strong>Total</strong></td>
+                        <td class="num"><strong>${t.abastecimentos}</strong></td>
+                        <td class="num"><strong>${litros(t.litros)}</strong></td>
+                        <td class="num"><strong>${reais(t.valor_bruto)}</strong></td>
+                        <td class="num negativo"><strong>- ${reais(t.desconto_concedido)}</strong></td>
+                        <td class="num total-caixa"><strong>${reais(t.valor_recebido)}</strong></td>
+                        <td class="num"></td>
+                    </tr>
+                </tfoot>
+            </table>
+            </div>
+        </div>`;
+}
+
 function renderizarCaixa(d) {
     const t = d.total;
+    const multiDia = d.data_fim && d.data_fim !== d.data;
+    // Quem está preso a um posto vê só a coluna do próprio posto no dia a dia
+    const colunasPosto = d.posto_travado ? [d.posto_travado] : ['CAJ', 'SKY'];
+    const rotuloPeriodo = multiDia
+        ? `De <strong>${brData(d.data)}</strong> a <strong>${brData(d.data_fim)}</strong>`
+        : `Data: <strong>${brData(d.data)}</strong> · Turno agora: ${d.turno_atual}`;
 
     document.getElementById('resumo-geral').innerHTML = `
         <div class="cartoes">
@@ -1358,13 +1675,45 @@ function renderizarCaixa(d) {
                 <strong class="valor negativo">- ${reais(t.desconto_concedido)}</strong>
             </div>
         </div>
-        <p class="nota">Data: <strong>${d.data.split('-').reverse().join('/')}</strong> · Turno agora: ${d.turno_atual}</p>
+        <p class="nota">${rotuloPeriodo}</p>
+        ${quadroPorPosto(d)}
+        ${multiDia && d.por_dia && d.por_dia.length ? `
+        <div class="card">
+            <h3>Dia a dia</h3>
+            <div class="rolagem">
+            <table class="tabela">
+                <thead>
+                    <tr><th>Dia</th><th class="num">Abast.</th><th class="num">Litros</th>
+                        <th class="num">Bruto</th><th class="num">Desconto</th>
+                        ${colunasPosto.map(p => `<th class="num">${p}</th>`).join('')}
+                        <th class="num">Recebido</th></tr>
+                </thead>
+                <tbody>
+                    ${d.por_dia.map(x => {
+                        const rp = x.recebido_por_posto || {};
+                        return `
+                        <tr>
+                            <td><strong>${brData(x.data)}</strong></td>
+                            <td class="num">${x.abastecimentos}</td>
+                            <td class="num">${litros(x.litros)}</td>
+                            <td class="num">${reais(x.valor_bruto)}</td>
+                            <td class="num negativo">- ${reais(x.desconto_concedido)}</td>
+                            ${colunasPosto.map(p => `<td class="num">${reais(rp[p])}</td>`).join('')}
+                            <td class="num"><strong>${reais(x.valor_recebido)}</strong></td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+            </div>
+        </div>` : ''}
     `;
 
     const f = d.filtros || {};
-    const janela = (f.hora_inicio || f.hora_fim)
-        ? `das ${(f.hora_inicio || '00:00:00').slice(0, 5)} às ${(f.hora_fim || '23:59:59').slice(0, 5)}`
-        : 'dia inteiro';
+    const janela = multiDia
+        ? `${brData(d.data)} a ${brData(d.data_fim)}`
+        : ((f.hora_inicio || f.hora_fim)
+            ? `das ${(f.hora_inicio || '00:00:00').slice(0, 5)} às ${(f.hora_fim || '23:59:59').slice(0, 5)}`
+            : 'dia inteiro');
     document.getElementById('titulo-abastecimentos').textContent =
         `Abastecimentos — ${janela} (${d.detalhes.length})`;
 
@@ -1429,7 +1778,7 @@ function renderizarCaixa(d) {
             <tbody>
                 ${d.detalhes.map(r => `
                     <tr>
-                        <td><strong>${(r.hora || '').slice(0, 5)}</strong></td>
+                        <td><strong>${multiDia ? brData(r.data).slice(0, 5) + ' ' : ''}${(r.hora || '').slice(0, 5)}</strong></td>
                         <td>${r.posto || ''}</td>
                         <td>${r.produto || ''}</td>
                         <td>${r.cliente || ''}</td>
@@ -1795,7 +2144,7 @@ async function carregarUsuarios() {
 
         container.innerHTML = alertas + `
             <table class="tabela">
-                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
+                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Posto</th><th>Situação</th><th></th></tr></thead>
                 <tbody>
                     ${d.usuarios.map(u => `
                         <tr>
@@ -1805,6 +2154,16 @@ async function carregarUsuarios() {
                                 ? u.email
                                 : '<span style="color:#b45309;">⚠️ sem e-mail</span>'}</td>
                             <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
+                            <td>
+                                <select onchange="definirPostoUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', this.value)">
+                                    ${['CAJ', 'SKY', 'AMBOS'].map(p =>
+                                        `<option value="${p}" ${u.poster_id === p ? 'selected' : ''}>${p}</option>`
+                                    ).join('')}
+                                    ${['CAJ', 'SKY', 'AMBOS'].includes(u.poster_id)
+                                        ? ''
+                                        : `<option value="" selected disabled>${u.poster_id || 'sem posto'}</option>`}
+                                </select>
+                            </td>
                             <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
                             <td>
                                 <button class="btn-mini" onclick="definirEmailUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', '${String(u.email || '').replace(/'/g, "\\'")}')">
@@ -1890,7 +2249,8 @@ async function criarUsuario(evento) {
                 usuario: document.getElementById('novo-usuario').value.trim(),
                 email: document.getElementById('novo-email').value.trim(),
                 senha: document.getElementById('nova-senha').value,
-                nivel: document.getElementById('novo-nivel').value
+                nivel: document.getElementById('novo-nivel').value,
+                poster_id: document.getElementById('novo-posto').value
             })
         });
 
@@ -1902,6 +2262,23 @@ async function criarUsuario(evento) {
     }
 
     return false;
+}
+
+// Troca o posto de um usuário. Vale para os abastecimentos registrados a
+// partir de agora; os que já foram gravados continuam com o posto antigo.
+async function definirPostoUsuario(usuarioId, nomeUsuario, posto) {
+    if (!posto) return;
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ poster_id: posto })
+        });
+        aviso(`✅ Posto de ${nomeUsuario} agora é ${posto}. Vale para os próximos abastecimentos.`);
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+        carregarUsuarios();
+    }
 }
 
 async function alternarUsuario(id, ativo) {

@@ -691,6 +691,15 @@
                         <option value="master">Master (acesso total)</option>
                     </select>
                 </div>
+                <div>
+                    <label>Posto</label>
+                    <select id="novo-posto" required>
+                        <option value="">Escolha o posto</option>
+                        <option value="CAJ">CAJ — Jardins</option>
+                        <option value="SKY">SKY — Sky Auto Posto</option>
+                        <option value="AMBOS">AMBOS — gerência dos dois</option>
+                    </select>
+                </div>
                 <button type="submit" class="btn btn-primary">Criar</button>
             </form>
             <p class="ajuda">
@@ -698,7 +707,10 @@
                 Não consegue vender abaixo do custo.<br>
                 <strong>Gerência:</strong> altera preços e descontos, mas só até a margem mínima de cada produto.
                 Não vê nem altera o preço de custo.<br>
-                <strong>Caixa:</strong> só consulta fechamento e relatórios — não altera nada.
+                <strong>Caixa:</strong> só consulta fechamento e relatórios — não altera nada.<br>
+                <strong>Posto:</strong> é daqui que vem o posto de cada abastecimento que a pessoa registra na pista.
+                Frentista e caixa de um posto devem ficar em <strong>CAJ</strong> ou <strong>SKY</strong>;
+                use <strong>AMBOS</strong> só para quem não registra vendas (gerência/master).
             </p>
         </div>
 
@@ -737,6 +749,6 @@
     </section>
 </div>
 
-<script src="js/admin.js?v=9"></script>
+<script src="js/admin.js?v=11"></script>
 </body>
 </html>
