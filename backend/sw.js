@@ -1,0 +1,110 @@
+// Service worker na RAIZ do site.
+//
+// Fica aqui de propósito: um service worker só enxerga arquivos da pasta dele
+// para baixo. Em /js/ ele controlava apenas /js/*, e o Chrome não considerava
+// o app instalável. Na raiz, ele controla o site inteiro.
+//
+// Estratégia: rede primeiro, cache como rede de segurança. O motorista na pista
+// costuma estar com sinal ruim — melhor abrir a versão guardada do que uma
+// tela de erro. Como a rede vem primeiro, ninguém fica preso numa versão velha.
+
+// v20: a fivela saiu de vez (ficou só a tira do cinto) e o "DESCONTOS" virou
+// uma etiqueta laçada na mangueira, desenhada dentro da própria imagem. O
+// nome e o selo subiram para o topo da faixa.
+//
+// v19: o monograma saiu da fivela do cinto. O guia de marca proíbe
+// "adicionar boxes ou formas ao redor do logotipo, em especial sobre
+// amarelo" — e uma fivela amarela com o símbolo dentro é exatamente isso.
+// A marca continua no boné e no peito, que o guia prevê para uniformes.
+//
+// v18: o monograma OFICIAL da Ipiranga entrou no uniforme do Cajinho, no
+// lugar da imitação que a IA tinha desenhado. Base: guia simplificado de
+// marca (mar/2023), seção "uso restrito | desverbalizado", que prevê o
+// símbolo sozinho "em roupas e uniformes de colaboradores".
+//
+// v17: "DESCONTOS" ganhou uma linha inteira no topo da faixa, para poder
+// ser grande de verdade sem espremer o mascote.
+//
+// v16: a imagem do Cajinho passou para a pasta icons, que já existia
+// (criar pasta nova pelo site do GitHub é o passo que mais dá errado).
+//
+// v15: o mascote Cajinho no cabeçalho das telas de entrar/criar conta, e o
+// endereço do posto com botão de rota DENTRO do cupom (antes ficava só num
+// bloco no fim da página, e não ia junto na imagem salva).
+// Trocar este número faz parte de publicar: sem isso, quem já tem o app
+// instalado continua abrindo as telas guardadas em cache e não vê nada do
+// que foi publicado.
+// v21: programa de indicação ("Indique e Ganhe") — link pessoal no painel do
+// cliente, faixa "fulano te indicou" no cadastro e aba nova no admin.
+// v22: campanha de frentistas — aba nova no admin (só Master), "clientes"
+// virou "parceiros" nas mensagens do programa de indicação.
+const CACHE = 'cajsky-v26';
+
+const ESSENCIAIS = [
+    '/',
+    '/index.html',
+    '/dashboard.html',
+    '/frentista.html',
+    '/css/style.css',
+    '/css/frentista.css',
+    '/js/app-v2.js',
+    '/js/postos.js',
+    '/js/frentista.js',
+    '/js/instalar.js',
+    '/manifest.json',
+    '/manifest-pista.json',
+    '/icons/cajinho.png',
+    '/icons/cajsky-192.png',
+    '/icons/pista-192.png'
+];
+
+self.addEventListener('install', evento => {
+    evento.waitUntil(
+        caches.open(CACHE)
+            .then(cache => cache.addAll(ESSENCIAIS))
+            .catch(() => { /* um arquivo ausente não pode derrubar a instalação */ })
+    );
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', evento => {
+    evento.waitUntil(
+        caches.keys().then(nomes => Promise.all(
+            nomes.filter(n => n !== CACHE).map(n => caches.delete(n))
+        ))
+    );
+    self.clients.claim();
+});
+
+self.addEventListener('fetch', evento => {
+    const req = evento.request;
+
+    if (req.method !== 'GET') return;
+
+    // Chamadas de API nunca entram no cache: preço e saldo de cupom
+    // desatualizados dariam informação errada na pista.
+    if (req.url.includes('/api/')) return;
+
+    // A página de redefinir senha também fica de fora. Ela é aberta por um
+    // link de e-mail com um token de uso único: guardar a resposta de um
+    // token no cache é pedir para o link seguinte abrir a tela do anterior.
+    if (req.url.includes('/redefinir-senha')) return;
+
+    evento.respondWith(
+        // "no-store" ignora qualquer cópia guardada pelo próprio navegador
+        // (fora do nosso controle) e vai direto na rede. Sem isso, "rede
+        // primeiro" às vezes não buscava nada novo de verdade — só repetia
+        // uma cópia antiga que o navegador tinha guardado por conta própria.
+        fetch(req, { cache: 'no-store' })
+            .then(resposta => {
+                if (resposta && resposta.status === 200 && resposta.type !== 'error') {
+                    const copia = resposta.clone();
+                    caches.open(CACHE).then(cache => cache.put(req, copia));
+                }
+                return resposta;
+            })
+            .catch(() => caches.match(req).then(
+                guardado => guardado || caches.match('/index.html')
+            ))
+    );
+});
