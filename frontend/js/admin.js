@@ -1586,6 +1586,56 @@ function litros(v) {
     return `${(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
 }
 
+// Quadro com o total do período de cada posto, lado a lado (CAJ, SKY e Total)
+function quadroPorPosto(d) {
+    const postos = d.por_posto_total || [];
+    if (!postos.length) return '';
+    const t = d.total;
+    const nomes = { CAJ: 'CAJ — Jardins', SKY: 'SKY — Sky Auto Posto' };
+    return `
+        <div class="card">
+            <h3>Por posto</h3>
+            <div class="rolagem">
+            <table class="tabela">
+                <thead>
+                    <tr><th>Posto</th><th class="num">Abast.</th><th class="num">Litros</th>
+                        <th class="num">Bruto</th><th class="num">Desconto</th>
+                        <th class="num">Recebido</th><th class="num">% do total</th></tr>
+                </thead>
+                <tbody>
+                    ${postos.map(p => {
+                        const pct = t.valor_recebido > 0
+                            ? (p.valor_recebido / t.valor_recebido * 100).toLocaleString('pt-BR',
+                                { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+                            : '—';
+                        return `
+                        <tr>
+                            <td><strong>${nomes[p.posto] || p.posto}</strong></td>
+                            <td class="num">${p.abastecimentos}</td>
+                            <td class="num">${litros(p.litros)}</td>
+                            <td class="num">${reais(p.valor_bruto)}</td>
+                            <td class="num negativo">- ${reais(p.desconto_concedido)}</td>
+                            <td class="num"><strong>${reais(p.valor_recebido)}</strong></td>
+                            <td class="num">${pct}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td><strong>Total</strong></td>
+                        <td class="num"><strong>${t.abastecimentos}</strong></td>
+                        <td class="num"><strong>${litros(t.litros)}</strong></td>
+                        <td class="num"><strong>${reais(t.valor_bruto)}</strong></td>
+                        <td class="num negativo"><strong>- ${reais(t.desconto_concedido)}</strong></td>
+                        <td class="num total-caixa"><strong>${reais(t.valor_recebido)}</strong></td>
+                        <td class="num"></td>
+                    </tr>
+                </tfoot>
+            </table>
+            </div>
+        </div>`;
+}
+
 function renderizarCaixa(d) {
     const t = d.total;
     const multiDia = d.data_fim && d.data_fim !== d.data;
@@ -1613,6 +1663,7 @@ function renderizarCaixa(d) {
             </div>
         </div>
         <p class="nota">${rotuloPeriodo}</p>
+        ${quadroPorPosto(d)}
         ${multiDia && d.por_dia && d.por_dia.length ? `
         <div class="card">
             <h3>Dia a dia</h3>
@@ -1621,18 +1672,24 @@ function renderizarCaixa(d) {
                 <thead>
                     <tr><th>Dia</th><th class="num">Abast.</th><th class="num">Litros</th>
                         <th class="num">Bruto</th><th class="num">Desconto</th>
+                        <th class="num">CAJ</th><th class="num">SKY</th>
                         <th class="num">Recebido</th></tr>
                 </thead>
                 <tbody>
-                    ${d.por_dia.map(x => `
+                    ${d.por_dia.map(x => {
+                        const rp = x.recebido_por_posto || {};
+                        return `
                         <tr>
                             <td><strong>${brData(x.data)}</strong></td>
                             <td class="num">${x.abastecimentos}</td>
                             <td class="num">${litros(x.litros)}</td>
                             <td class="num">${reais(x.valor_bruto)}</td>
                             <td class="num negativo">- ${reais(x.desconto_concedido)}</td>
+                            <td class="num">${reais(rp.CAJ)}</td>
+                            <td class="num">${reais(rp.SKY)}</td>
                             <td class="num"><strong>${reais(x.valor_recebido)}</strong></td>
-                        </tr>`).join('')}
+                        </tr>`;
+                    }).join('')}
                 </tbody>
             </table>
             </div>
