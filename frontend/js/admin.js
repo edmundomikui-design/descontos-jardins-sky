@@ -1520,6 +1520,17 @@ async function carregarCaixa() {
         if (produto) params.append('produto_id', produto);
 
         const d = await api(`/admin/caixa?${params}`);
+
+        // Usuário preso a um posto (CAJ ou SKY): o filtro fica fixo no posto
+        // dele. A trava de verdade está no servidor; aqui só evita confusão.
+        const seletorPosto = document.getElementById('caixa-posto');
+        if (d.posto_travado) {
+            seletorPosto.value = d.posto_travado;
+            seletorPosto.disabled = true;
+        } else {
+            seletorPosto.disabled = false;
+        }
+
         renderizarCaixa(d);
         preencherFiltroProdutos();
     } catch (erro) {
@@ -1639,6 +1650,8 @@ function quadroPorPosto(d) {
 function renderizarCaixa(d) {
     const t = d.total;
     const multiDia = d.data_fim && d.data_fim !== d.data;
+    // Quem está preso a um posto vê só a coluna do próprio posto no dia a dia
+    const colunasPosto = d.posto_travado ? [d.posto_travado] : ['CAJ', 'SKY'];
     const rotuloPeriodo = multiDia
         ? `De <strong>${brData(d.data)}</strong> a <strong>${brData(d.data_fim)}</strong>`
         : `Data: <strong>${brData(d.data)}</strong> · Turno agora: ${d.turno_atual}`;
@@ -1672,7 +1685,7 @@ function renderizarCaixa(d) {
                 <thead>
                     <tr><th>Dia</th><th class="num">Abast.</th><th class="num">Litros</th>
                         <th class="num">Bruto</th><th class="num">Desconto</th>
-                        <th class="num">CAJ</th><th class="num">SKY</th>
+                        ${colunasPosto.map(p => `<th class="num">${p}</th>`).join('')}
                         <th class="num">Recebido</th></tr>
                 </thead>
                 <tbody>
@@ -1685,8 +1698,7 @@ function renderizarCaixa(d) {
                             <td class="num">${litros(x.litros)}</td>
                             <td class="num">${reais(x.valor_bruto)}</td>
                             <td class="num negativo">- ${reais(x.desconto_concedido)}</td>
-                            <td class="num">${reais(rp.CAJ)}</td>
-                            <td class="num">${reais(rp.SKY)}</td>
+                            ${colunasPosto.map(p => `<td class="num">${reais(rp[p])}</td>`).join('')}
                             <td class="num"><strong>${reais(x.valor_recebido)}</strong></td>
                         </tr>`;
                     }).join('')}
@@ -2132,7 +2144,7 @@ async function carregarUsuarios() {
 
         container.innerHTML = alertas + `
             <table class="tabela">
-                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
+                <thead><tr><th>Usuário</th><th>Nome</th><th>E-mail</th><th>Nível</th><th>Posto</th><th>Situação</th><th></th></tr></thead>
                 <tbody>
                     ${d.usuarios.map(u => `
                         <tr>
@@ -2142,6 +2154,16 @@ async function carregarUsuarios() {
                                 ? u.email
                                 : '<span style="color:#b45309;">⚠️ sem e-mail</span>'}</td>
                             <td><span class="badge badge-${u.nivel}">${rotuloNivel(u.nivel)}</span></td>
+                            <td>
+                                <select onchange="definirPostoUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', this.value)">
+                                    ${['CAJ', 'SKY', 'AMBOS'].map(p =>
+                                        `<option value="${p}" ${u.poster_id === p ? 'selected' : ''}>${p}</option>`
+                                    ).join('')}
+                                    ${['CAJ', 'SKY', 'AMBOS'].includes(u.poster_id)
+                                        ? ''
+                                        : `<option value="" selected disabled>${u.poster_id || 'sem posto'}</option>`}
+                                </select>
+                            </td>
                             <td>${u.ativo ? '✅ Ativo' : '🚫 Desativado'}</td>
                             <td>
                                 <button class="btn-mini" onclick="definirEmailUsuario(${u.id}, '${String(u.usuario).replace(/'/g, "\\'")}', '${String(u.email || '').replace(/'/g, "\\'")}')">
@@ -2227,7 +2249,8 @@ async function criarUsuario(evento) {
                 usuario: document.getElementById('novo-usuario').value.trim(),
                 email: document.getElementById('novo-email').value.trim(),
                 senha: document.getElementById('nova-senha').value,
-                nivel: document.getElementById('novo-nivel').value
+                nivel: document.getElementById('novo-nivel').value,
+                poster_id: document.getElementById('novo-posto').value
             })
         });
 
@@ -2239,6 +2262,23 @@ async function criarUsuario(evento) {
     }
 
     return false;
+}
+
+// Troca o posto de um usuário. Vale para os abastecimentos registrados a
+// partir de agora; os que já foram gravados continuam com o posto antigo.
+async function definirPostoUsuario(usuarioId, nomeUsuario, posto) {
+    if (!posto) return;
+    try {
+        await api(`/admin/usuarios/${usuarioId}`, {
+            method: 'POST',
+            body: JSON.stringify({ poster_id: posto })
+        });
+        aviso(`✅ Posto de ${nomeUsuario} agora é ${posto}. Vale para os próximos abastecimentos.`);
+        carregarUsuarios();
+    } catch (erro) {
+        aviso(`❌ ${erro.message}`, 'erro');
+        carregarUsuarios();
+    }
 }
 
 async function alternarUsuario(id, ativo) {
